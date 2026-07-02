@@ -1,0 +1,302 @@
+// DAL System - Prisma Schema
+// MySQL 8.x
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.VarChar(36)
+  name           String    @db.VarChar(100)
+  email          String    @unique @db.VarChar(150)
+  passwordHash   String    @map("password_hash") @db.VarChar(255)
+  role           UserRole
+  isActive       Boolean   @default(true) @map("is_active")
+  mustChangePwd  Boolean   @default(false) @map("must_change_pwd")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime? @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  documents            Document[]           @relation("UploadedBy")
+  approvalsAsApprover  DocumentApproval[]   @relation("ApproverUser")
+  approvalsAsAssignedBy DocumentApproval[]  @relation("AssignedByUser")
+  approvalsAsNext      DocumentApproval[]   @relation("NextApproverUser")
+  notifications        Notification[]
+  auditLogs            AuditLog[]
+  refreshTokens        RefreshToken[]
+  approverMappings     ProductApproverMapping[]
+  labelCheckForms      LabelCheckForm[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  superadmin
+  admin
+  approver
+  viewer
+  uploader
+}
+
+model ProductGroup {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  code       String   @unique @db.VarChar(10)
+  isActive   Boolean  @default(true) @map("is_active")
+
+  categories ProductCategory[]
+  mappings   ProductApproverMapping[]
+
+  @@map("product_groups")
+}
+
+model ProductCategory {
+  id          Int      @id @default(autoincrement())
+  groupId     Int      @map("group_id")
+  name        String   @db.VarChar(150)
+  subGroup    String?  @map("sub_group") @db.VarChar(100)
+  productCode String   @unique @map("product_code") @db.Char(5)
+  isActive    Boolean  @default(true) @map("is_active")
+
+  group     ProductGroup @relation(fields: [groupId], references: [id])
+  documents Document[]
+
+  @@map("product_categories")
+}
+
+model ProductApproverMapping {
+  id             Int    @id @default(autoincrement())
+  productGroupId Int    @map("product_group_id")
+  approverUserId String @map("approver_user_id") @db.VarChar(36)
+  level          Int    @default(2) @db.TinyInt
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  productGroup ProductGroup @relation(fields: [productGroupId], references: [id])
+  approver     User         @relation(fields: [approverUserId], references: [id])
+
+  @@unique([productGroupId, level], name: "uq_group_level")
+  @@map("product_approver_mappings")
+}
+
+model Document {
+  id                  String    @id @default(uuid()) @db.VarChar(36)
+  regulatoryId        String    @unique @map("regulatory_id") @db.VarChar(40)
+  productCategoryId   Int       @map("product_category_id")
+  labelName           String    @map("label_name") @db.VarChar(200)
+  fileNameOriginal    String    @map("file_name_original") @db.VarChar(255)
+  pathOriginal        String    @map("path_original") @db.VarChar(500)
+  pathSignedLevel0    String?   @map("path_signed_level0") @db.VarChar(500)
+  pathSignedLevel1    String?   @map("path_signed_level1") @db.VarChar(500)
+  pathSignedFinal     String?   @map("path_signed_final") @db.VarChar(500)
+  pathCheckReport     String?   @map("path_check_report") @db.VarChar(500)
+  status              DocumentStatus @default(PENDING_APPROVAL)
+  uploadedBy          String    @map("uploaded_by") @db.VarChar(36)
+  tanggalTerima       DateTime  @map("tanggal_terima") @db.Date
+  tanggalPeriksa      DateTime  @map("tanggal_periksa") @db.Date
+  tanggalVerifikasi   DateTime? @map("tanggal_verifikasi") @db.Date
+  tanggalApproval     DateTime? @map("tanggal_approval") @db.Date
+  qrPathOriginal      String?   @map("qr_path_original") @db.VarChar(500)
+  qrPathEsign         String?   @map("qr_path_esign") @db.VarChar(500)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime? @updatedAt @map("updated_at")
+  deletedAt           DateTime? @map("deleted_at")
+
+  uploader         User              @relation("UploadedBy", fields: [uploadedBy], references: [id])
+  productCategory  ProductCategory   @relation(fields: [productCategoryId], references: [id])
+  approvals        DocumentApproval[]
+  esignPositions   DocumentEsignPosition[]
+  labelCheckForm   LabelCheckForm?
+
+  @@index([status, deletedAt],          name: "idx_doc_status")
+  @@index([uploadedBy, status],         name: "idx_doc_uploader")
+  @@index([productCategoryId, status],  name: "idx_doc_category")
+  @@index([tanggalTerima],              name: "idx_doc_terima")
+  @@index([tanggalApproval],            name: "idx_doc_approval")
+  @@index([regulatoryId],               name: "idx_doc_regulatory")
+  @@map("documents")
+}
+
+enum DocumentStatus {
+  PENDING_APPROVAL
+  APPROVED
+  DECLINED
+}
+
+model DocumentApproval {
+  id             String    @id @default(uuid()) @db.VarChar(36)
+  documentId     String    @map("document_id") @db.VarChar(36)
+  approverId     String    @map("approver_id") @db.VarChar(36)
+  assignedBy     String?   @map("assigned_by") @db.VarChar(36)
+  level          Int       @db.TinyInt
+  status         ApprovalStatus @default(PENDING)
+  nextApproverId String?   @map("next_approver_id") @db.VarChar(36)
+  pathSigned     String?   @map("path_signed") @db.VarChar(500)
+  qrPath         String?   @map("qr_path") @db.VarChar(500)
+  notes          String?   @db.Text
+  signedAt       DateTime? @map("signed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  document      Document  @relation(fields: [documentId], references: [id])
+  approver      User      @relation("ApproverUser", fields: [approverId], references: [id])
+  assigner      User?     @relation("AssignedByUser", fields: [assignedBy], references: [id])
+  nextApprover  User?     @relation("NextApproverUser", fields: [nextApproverId], references: [id])
+  esignPosition DocumentEsignPosition?
+
+  @@index([approverId, status], name: "idx_approval_approver")
+  @@index([documentId, status], name: "idx_approval_doc")
+  @@map("document_approvals")
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+model DocumentEsignPosition {
+  id           String   @id @default(uuid()) @db.VarChar(36)
+  documentId   String   @map("document_id") @db.VarChar(36)
+  approvalId   String   @unique @map("approval_id") @db.VarChar(36)
+  pageNumber   Int      @default(1) @map("page_number")
+  xPercent     Decimal  @map("x_percent") @db.Decimal(6, 3)
+  yPercent     Decimal  @map("y_percent") @db.Decimal(6, 3)
+  widthPt      Decimal  @map("width_pt") @db.Decimal(7, 2)
+  heightPt     Decimal  @map("height_pt") @db.Decimal(7, 2)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  document Document        @relation(fields: [documentId], references: [id])
+  approval DocumentApproval @relation(fields: [approvalId], references: [id])
+
+  @@map("document_esign_positions")
+}
+
+model SystemSetting {
+  key         String   @id @db.VarChar(100)
+  value       String   @db.Text
+  description String?  @db.VarChar(255)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+model Notification {
+  id          String           @id @default(uuid()) @db.VarChar(36)
+  userId      String           @map("user_id") @db.VarChar(36)
+  type        NotificationType
+  title       String           @db.VarChar(200)
+  message     String           @db.Text
+  entityType  String?          @map("entity_type") @db.VarChar(50)
+  entityId    String?          @map("entity_id") @db.VarChar(100)
+  isRead      Boolean          @default(false) @map("is_read")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead, createdAt(sort: Desc)], name: "idx_user_unread")
+  @@map("notifications")
+}
+
+enum NotificationType {
+  APPROVAL_ASSIGNED
+  APPROVAL_DONE
+  APPROVAL_DECLINED
+  FORGOT_PASSWORD
+  SYSTEM
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  userId    String?  @map("user_id") @db.VarChar(36)
+  action    String   @db.VarChar(100)
+  entity    String?  @db.VarChar(50)
+  entityId  String?  @map("entity_id") @db.VarChar(100)
+  ipAddress String?  @map("ip_address") @db.VarChar(45)
+  meta      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([createdAt(sort: Desc)],       name: "idx_audit_date")
+  @@index([userId, createdAt(sort: Desc)], name: "idx_audit_user")
+  @@index([action],                      name: "idx_audit_action")
+  @@map("audit_logs")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  userId    String   @map("user_id") @db.VarChar(36)
+  tokenHash String   @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime @map("expires_at")
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tokenHash],        name: "idx_refresh_hash")
+  @@index([userId, revoked],  name: "idx_refresh_user")
+  @@index([expiresAt],        name: "idx_refresh_expires")
+  @@map("refresh_tokens")
+}
+
+model LabelCheckParameter {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(200)
+  description String?  @db.Text
+  isRequired  Boolean  @default(true) @map("is_required")
+  orderIndex  Int      @default(0) @map("order_index")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  results LabelCheckResult[]
+
+  @@map("label_check_parameters")
+}
+
+model LabelCheckForm {
+  id            String    @id @default(uuid()) @db.VarChar(36)
+  documentId    String    @unique @map("document_id") @db.VarChar(36)
+  checkedBy     String    @map("checked_by") @db.VarChar(36)
+  overallStatus String?   @map("overall_status") @db.VarChar(10)
+  submittedAt   DateTime? @map("submitted_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  document Document          @relation(fields: [documentId], references: [id])
+  checker  User              @relation(fields: [checkedBy], references: [id])
+  results  LabelCheckResult[]
+
+  @@map("label_check_forms")
+}
+
+model LabelCheckResult {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  formId      String   @map("form_id") @db.VarChar(36)
+  parameterId Int      @map("parameter_id")
+  status      String   @db.VarChar(2)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  form      LabelCheckForm      @relation(fields: [formId], references: [id])
+  parameter LabelCheckParameter @relation(fields: [parameterId], references: [id])
+  remarks   LabelCheckRemark[]
+
+  @@unique([formId, parameterId], name: "uq_form_parameter")
+  @@map("label_check_results")
+}
+
+model LabelCheckRemark {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  resultId      String   @map("result_id") @db.VarChar(36)
+  description   String   @db.Text
+  remarksText   String   @map("remarks_text") @db.Text
+  imagePath     String   @map("image_path") @db.VarChar(500)
+  imageFilename String   @map("image_filename") @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  result LabelCheckResult @relation(fields: [resultId], references: [id])
+
+  @@map("label_check_remarks")
+}

@@ -1,0 +1,97 @@
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1B3A6F 0%, #2A4F8F 40%, #F8FAFC 70%, #E63946 100%);
+  background-size: 400% 400%;
+  animation: loginBg 12s ease infinite;
+  padding: 20px;
+}
+
+@keyframes loginBg {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.login-card {
+  background: rgba(255,255,255,0.92);
+  backdrop-filter: blur(20px);
+  border-radius: 16px;
+  padding: 40px 36px;
+  width: 400px;
+  max-width: 100%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+  text-align: center;
+  border: 1px solid rgba(255,255,255,0.5);
+}
+
+.login-card h1 {
+  margin: 0 0 4px;
+  color: var(--cimory-blue);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.login-subtitle {
+  color: var(--cimory-text-muted);
+  font-size: 12.5px;
+  margin-bottom: 28px;
+}
+
+.login-card h2 {
+  font-size: 14px;
+  color: var(--cimory-text);
+  margin-bottom: 20px;
+  font-weight: 600;
+}
+
+.login-card .form-group { margin-bottom: 14px; text-align: left; }
+.login-card .form-group input {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1.5px solid var(--cimory-gray);
+  font-size: 14px;
+}
+.login-card .form-group input:focus {
+  border-color: var(--cimory-blue);
+  box-shadow: 0 0 0 3px rgba(27,58,111,0.1);
+}
+
+.login-btn {
+  width: 100%;
+  padding: 11px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 6px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--cimory-blue) 0%, var(--cimory-red) 100%);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.login-btn:hover { opacity: 0.9; }
+.login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.login-error {
+  background: #FEE2E2;
+  color: var(--cimory-red);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 12.5px;
+  border: 1px solid #FECACA;
+}
+
+.login-footer {
+  margin-top: 24px;
+  font-size: 11px;
+  color: var(--cimory-text-muted);
+}
+
+@media (max-width: 480px) {
+  .login-card { padding: 28px 24px; }
+  .login-card h1 { font-size: 20px; }
+}

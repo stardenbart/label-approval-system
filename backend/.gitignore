@@ -1,0 +1,10 @@
+node_modules/
+.env
+logs/
+storage/
+dist/
+*.log
+prisma/dev.db
+# Never commit temp upload files
+storage/tmp/
+storage/tmp_img/

@@ -1,0 +1,168 @@
+// backend/src/controllers/user.controller.js
+'use strict';
+
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const Joi    = require('joi');
+const { prisma }    = require('../config/prisma');
+const auditService  = require('../services/audit.service');
+const emailService  = require('../services/email.service');
+const notifService  = require('../services/notification.service');
+
+exports.list = async (req, res, next) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: { deletedAt: null },
+      select: { id:true, name:true, email:true, role:true, isActive:true, mustChangePwd:true, createdAt:true },
+      orderBy: { name: 'asc' },
+    });
+    res.json({ success: true, data: users });
+  } catch (err) { next(err); }
+};
+
+exports.getOne = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id:true, name:true, email:true, role:true, isActive:true, mustChangePwd:true, createdAt:true },
+    });
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    res.json({ success: true, data: user });
+  } catch (err) { next(err); }
+};
+
+exports.create = async (req, res, next) => {
+  try {
+    const schema = Joi.object({
+      name:     Joi.string().max(100).required(),
+      email:    Joi.string().email().required(),
+      role:     Joi.string().valid('superadmin','admin','approver','viewer', 'uploader').required(),
+      password: Joi.string().min(8).required(),
+    });
+    const { error, value } = schema.validate(req.body);
+    if (error) return res.status(400).json({ success: false, message: error.details[0].message });
+
+    const exists = await prisma.user.findUnique({ where: { email: value.email } });
+    if (exists) return res.status(409).json({ success: false, message: 'Email already exists' });
+
+    const passwordHash = await bcrypt.hash(value.password, 12);
+    const user = await prisma.user.create({
+      data: { name: value.name, email: value.email, passwordHash, role: value.role, mustChangePwd: true },
+      select: { id:true, name:true, email:true, role:true },
+    });
+
+    await auditService.log(req.user.id, 'USER_CREATED', 'users', user.id, req.ip, { email: value.email, role: value.role });
+    res.status(201).json({ success: true, data: user });
+  } catch (err) { next(err); }
+};
+
+exports.update = async (req, res, next) => {
+  try {
+    const schema = Joi.object({
+      name:     Joi.string().max(100),
+      role:     Joi.string().valid('superadmin','admin','approver','viewer'),
+      isActive: Joi.boolean(),
+    });
+    const { error, value } = schema.validate(req.body);
+    if (error) return res.status(400).json({ success: false, message: error.details[0].message });
+
+    // LOW-08: Prevent superadmin from deactivating/demoting their own account
+    if (req.params.id === req.user.id) {
+      if (value.isActive === false) {
+        return res.status(400).json({ success: false, message: 'Tidak dapat menonaktifkan akun sendiri' });
+      }
+      if (value.role && value.role !== req.user.role) {
+        return res.status(400).json({ success: false, message: 'Tidak dapat mengubah role akun sendiri' });
+      }
+    }
+
+    // Check if deactivating user with pending approvals
+    if (value.isActive === false) {
+      const pendingCount = await prisma.documentApproval.count({
+        where: { approverId: req.params.id, status: 'PENDING' },
+      });
+      if (pendingCount > 0) {
+        // Alert superadmins
+        const admins = await prisma.user.findMany({ where: { role:'superadmin', isActive:true } });
+        const targetUser = await prisma.user.findUnique({ where:{ id: req.params.id }, select:{name:true,email:true} });
+        for (const admin of admins) {
+          await notifService.create({
+            userId: admin.id, type:'SYSTEM',
+            title: 'User Dinonaktifkan — Perlu Reassign',
+            message: `${targetUser.name} dinonaktifkan namun masih memiliki ${pendingCount} dokumen pending. Harap reassign.`,
+            entityType: 'users', entityId: req.params.id,
+          });
+        }
+      }
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.params.id },
+      data:  value,
+      select: { id:true, name:true, email:true, role:true, isActive:true },
+    });
+    await auditService.log(req.user.id, 'USER_UPDATED', 'users', req.params.id, req.ip, value);
+    res.json({ success: true, data: updated });
+  } catch (err) { next(err); }
+};
+
+exports.deactivate = async (req, res, next) => {
+  try {
+    await prisma.user.update({ where: { id: req.params.id }, data: { isActive: false } });
+    await auditService.log(req.user.id, 'USER_DEACTIVATED', 'users', req.params.id, req.ip);
+    res.json({ success: true, message: 'User deactivated' });
+  } catch (err) { next(err); }
+};
+
+exports.resetPassword = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findFirst({ where: { id: req.params.id, deletedAt: null } });
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const tempPwd      = crypto.randomBytes(8).toString('hex');
+    const passwordHash = await bcrypt.hash(tempPwd, 12);
+
+    await prisma.user.update({ where: { id: req.params.id }, data: { passwordHash, mustChangePwd: true } });
+    await emailService.sendPasswordReset(user.email, user.name, tempPwd);
+    await auditService.log(req.user.id, 'PASSWORD_RESET', 'users', req.params.id, req.ip);
+
+    res.json({ success: true, message: 'Password reset and sent to user email' });
+  } catch (err) { next(err); }
+};
+
+exports.getMappings = async (req, res, next) => {
+  try {
+    const mappings = await prisma.productApproverMapping.findMany({
+      include: {
+        productGroup: true,
+        approver: { select: { id:true, name:true, email:true } },
+      },
+    });
+    res.json({ success: true, data: mappings });
+  } catch (err) { next(err); }
+};
+
+exports.setMapping = async (req, res, next) => {
+  try {
+    const { error, value } = Joi.object({
+      productGroupId: Joi.number().integer().required(),
+      approverUserId: Joi.string().uuid().required(),
+      level:          Joi.number().integer().min(0).max(2).default(2),
+    }).validate(req.body);
+    if (error) return res.status(400).json({ success: false, message: error.details[0].message });
+
+    const mapping = await prisma.productApproverMapping.upsert({
+      where:  { uq_group_level: { productGroupId: value.productGroupId, level: value.level } },
+      create: value,
+      update: { approverUserId: value.approverUserId },
+    });
+    res.json({ success: true, data: mapping });
+  } catch (err) { next(err); }
+};
+
+exports.deleteMapping = async (req, res, next) => {
+  try {
+    await prisma.productApproverMapping.delete({ where: { id: parseInt(req.params.id) } });
+    res.json({ success: true, message: 'Mapping deleted' });
+  } catch (err) { next(err); }
+};
