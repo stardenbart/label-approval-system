@@ -82,7 +82,12 @@ model ProductApproverMapping {
   productCategory ProductCategory? @relation(fields: [productCategoryId], references: [id])
   approver        User             @relation(fields: [approverUserId], references: [id])
 
-  @@unique([productGroupId, level], name: "uq_group_level")
+  // NOTE: there is deliberately NO @@unique([productGroupId, level]) here.
+  // A plain (productGroupId, level) unique index would also collide with
+  // category-specific override rows sharing that same group+level (MySQL
+  // unique indexes can't express "only when productCategoryId IS NULL").
+  // "One group-default row per group+level" is instead enforced in
+  // application code — see user.controller.js#setMapping and prisma/seed.js.
   @@unique([productCategoryId, level], name: "uq_category_level")
   @@map("product_approver_mappings")
 }

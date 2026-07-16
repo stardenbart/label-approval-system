@@ -114,18 +114,22 @@ async function main() {
   // Superadmin should update this via User Management → Product-Approver Mapping.
   const superadminUser = await prisma.user.findFirst({ where: { role: 'superadmin' } });
   if (superadminUser) {
+    // Group-default rows (productCategoryId null) have no DB unique constraint to upsert
+    // against — see schema.prisma note on ProductApproverMapping — so find-then-create.
+    async function upsertGroupDefault(groupId, level) {
+      const existing = await prisma.productApproverMapping.findFirst({
+        where: { productGroupId: groupId, level, productCategoryId: null },
+      });
+      if (existing) return;
+      await prisma.productApproverMapping.create({
+        data: { productGroupId: groupId, approverUserId: superadminUser.id, level },
+      });
+    }
+
     const allGroups = await prisma.productGroup.findMany();
     for (const grp of allGroups) {
-      await prisma.productApproverMapping.upsert({
-        where:  { uq_group_level: { productGroupId: grp.id, level: 0 } },
-        update: {},
-        create: { productGroupId: grp.id, approverUserId: superadminUser.id, level: 0 },
-      });
-      await prisma.productApproverMapping.upsert({
-        where:  { uq_group_level: { productGroupId: grp.id, level: 1 } },
-        update: {},
-        create: { productGroupId: grp.id, approverUserId: superadminUser.id, level: 1 },
-      });
+      await upsertGroupDefault(grp.id, 0);
+      await upsertGroupDefault(grp.id, 1);
     }
     console.log(`Default Level 0 & Level 1 mappings created (→ ${superadminUser.name}). Update via User Management.`);
   }

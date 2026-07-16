@@ -169,17 +169,27 @@ exports.setMapping = async (req, res, next) => {
 
     let mapping;
     if (value.productCategoryId) {
+      // Unique per specific product+level is safely DB-enforced (uq_category_level) —
+      // productCategoryId is never null in this branch, so MySQL's unique index applies cleanly.
       mapping = await prisma.productApproverMapping.upsert({
         where:  { uq_category_level: { productCategoryId: value.productCategoryId, level: value.level } },
         create: value,
         update: { approverUserId: value.approverUserId },
       });
     } else {
-      mapping = await prisma.productApproverMapping.upsert({
-        where:  { uq_group_level: { productGroupId: value.productGroupId, level: value.level } },
-        create: { ...value, productCategoryId: null },
-        update: { approverUserId: value.approverUserId },
+      // Group-default row (productCategoryId null): no DB unique constraint covers this
+      // combination (see schema.prisma note), so find-then-create/update instead of upsert.
+      const existing = await prisma.productApproverMapping.findFirst({
+        where: { productGroupId: value.productGroupId, level: value.level, productCategoryId: null },
       });
+      mapping = existing
+        ? await prisma.productApproverMapping.update({
+            where: { id: existing.id },
+            data:  { approverUserId: value.approverUserId },
+          })
+        : await prisma.productApproverMapping.create({
+            data: { ...value, productCategoryId: null },
+          });
     }
     res.json({ success: true, data: mapping });
   } catch (err) { next(err); }
