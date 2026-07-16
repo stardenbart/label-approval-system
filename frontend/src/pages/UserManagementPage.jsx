@@ -65,7 +65,11 @@ function UserModal({ user, onClose, onSaved }) {
           <h3 className="font-semibold text-gray-900">{isEdit ? 'Edit User' : 'Add User'}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          onKeyDown={e => { if (e.key === 'Enter' && e.target.type !== 'submit') e.preventDefault(); }}
+          className="p-6 space-y-4"
+        >
           <div>
             <label className="label">Full Name</label>
             <input type="text" className="input" value={form.name}
@@ -196,7 +200,11 @@ function MappingTab() {
         <h4 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <Plus size={16} className="text-brand-500" /> Add / Update Mapping
         </h4>
-        <form onSubmit={handleAdd} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+        <form
+          onSubmit={handleAdd}
+          onKeyDown={e => { if (e.key === 'Enter' && e.target.type !== 'submit') e.preventDefault(); }}
+          className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+        >
           <div>
             <label className="label">Product Group</label>
             <select className="input" value={form.productGroupId}

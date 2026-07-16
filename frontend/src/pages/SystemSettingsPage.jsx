@@ -102,7 +102,11 @@ export default function SystemSettingsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Form */}
           <div className="lg:col-span-2">
-            <form onSubmit={handleSave} className="card p-6 space-y-5">
+            <form
+              onSubmit={handleSave}
+              onKeyDown={e => { if (e.key === 'Enter' && e.target.type !== 'submit') e.preventDefault(); }}
+              className="card p-6 space-y-5"
+            >
               <h3 className="font-semibold text-gray-900">Default QR Stamp</h3>
 
               <div className="grid grid-cols-2 gap-4">

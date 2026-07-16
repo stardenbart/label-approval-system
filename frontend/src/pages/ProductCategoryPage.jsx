@@ -56,7 +56,11 @@ function GroupModal({ group, onClose, onSaved }) {
             <X size={20} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          onKeyDown={e => { if (e.key === 'Enter' && e.target.type !== 'submit') e.preventDefault(); }}
+          className="p-6 space-y-4"
+        >
           {!isEdit && (
             <div>
               <label className="label">
@@ -163,7 +167,11 @@ function CategoryModal({ cat, groups, onClose, onSaved }) {
             <X size={20} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          onKeyDown={e => { if (e.key === 'Enter' && e.target.type !== 'submit') e.preventDefault(); }}
+          className="p-6 space-y-4"
+        >
           <div>
             <label className="label">Product Group</label>
             <select

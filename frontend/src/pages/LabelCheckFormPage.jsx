@@ -95,7 +95,11 @@ function AddRemarkModal({ resultId, onClose, onAdded }) {
           <h3 className="font-semibold text-gray-900">Tambah Remark NG</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          onKeyDown={e => { if (e.key === 'Enter' && e.target.type !== 'submit') e.preventDefault(); }}
+          className="p-6 space-y-4"
+        >
           <div>
             <label className="label">Deskripsi Masalah <span className="text-red-500">*</span></label>
             <input type="text" className="input" value={desc}
