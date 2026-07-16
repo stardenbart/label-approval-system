@@ -43,9 +43,8 @@ const logger     = require('../config/logger');
  * it is NEVER redrawn at level 1/2, which would create duplicate/overlapping
  * text. See overlayEsign() below.
  *
- * Placed on EVERY page of the PDF (not just the QR page), since the whole
- * point is "which record does this piece of paper belong to" — a reader
- * could be looking at any page.
+ * Placed ONLY on the single page the staff selected (footerPos.pageNumber),
+ * same as the QR stamp — NOT auto-repeated across every page of the PDF.
  */
 const FOOTER_FONT_SIZE  = 7;
 const FOOTER_COLOR      = rgb(0.55, 0.55, 0.55); // gray
@@ -88,35 +87,39 @@ async function drawFooter(pdfDoc, document, footerPos) {
   const rotation = footerPos?.rotation || 0;
   const lineGap  = fontSize + 2;
 
-  for (const page of pdfDoc.getPages()) {
-    const { width, height } = page.getSize();
-    const xPt = footerPos ? (footerPos.xPercent / 100) * width : FOOTER_MARGIN_PT;
-    // Same convention as the QR box: xPercent/yPercent is the box's top-left
-    // corner (percent-of-page, top-left origin); subtract heightPt to land on
-    // the bottom of the box, which is where the 3-line block's baseline sits.
-    const yPt = footerPos
-      ? height - (footerPos.yPercent / 100) * height - footerPos.heightPt
-      : FOOTER_MARGIN_PT;
-    const maxWidth = footerPos ? footerPos.widthPt : width - FOOTER_MARGIN_PT * 2;
+  // Stamp only the single page the staff selected — same as the QR box —
+  // instead of repeating it on every page of the document.
+  const pages     = pdfDoc.getPages();
+  const pageIndex = Math.max(0, Math.min(pages.length - 1, (footerPos?.pageNumber || 1) - 1));
+  const page      = pages[pageIndex];
 
-    lines.forEach((line, i) => {
-      // Local offset (unrotated) from the block's pivot point, same stacking
-      // order as before; rotated around the pivot so all 3 lines move as one
-      // rigid block instead of spinning individually around their own anchor.
-      const localOffsetY = (lines.length - 1 - i) * lineGap;
-      const { x: dx, y: dy } = rotatePoint(0, localOffsetY, rotation);
+  const { width, height } = page.getSize();
+  const xPt = footerPos ? (footerPos.xPercent / 100) * width : FOOTER_MARGIN_PT;
+  // Same convention as the QR box: xPercent/yPercent is the box's top-left
+  // corner (percent-of-page, top-left origin); subtract heightPt to land on
+  // the bottom of the box, which is where the 3-line block's baseline sits.
+  const yPt = footerPos
+    ? height - (footerPos.yPercent / 100) * height - footerPos.heightPt
+    : FOOTER_MARGIN_PT;
+  const maxWidth = footerPos ? footerPos.widthPt : width - FOOTER_MARGIN_PT * 2;
 
-      page.drawText(line, {
-        x: xPt + dx,
-        y: yPt + dy,
-        size: fontSize,
-        font,
-        color: FOOTER_COLOR,
-        maxWidth,
-        rotate: degrees(rotation),
-      });
+  lines.forEach((line, i) => {
+    // Local offset (unrotated) from the block's pivot point, same stacking
+    // order as before; rotated around the pivot so all 3 lines move as one
+    // rigid block instead of spinning independently around their own anchor.
+    const localOffsetY = (lines.length - 1 - i) * lineGap;
+    const { x: dx, y: dy } = rotatePoint(0, localOffsetY, rotation);
+
+    page.drawText(line, {
+      x: xPt + dx,
+      y: yPt + dy,
+      size: fontSize,
+      font,
+      color: FOOTER_COLOR,
+      maxWidth,
+      rotate: degrees(rotation),
     });
-  }
+  });
 }
 
 /**
