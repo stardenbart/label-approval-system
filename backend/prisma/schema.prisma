@@ -63,23 +63,27 @@ model ProductCategory {
   productCode String   @unique @map("product_code") @db.Char(5)
   isActive    Boolean  @default(true) @map("is_active")
 
-  group     ProductGroup @relation(fields: [groupId], references: [id])
-  documents Document[]
+  group           ProductGroup             @relation(fields: [groupId], references: [id])
+  documents       Document[]
+  approverMappings ProductApproverMapping[]
 
   @@map("product_categories")
 }
 
 model ProductApproverMapping {
-  id             Int    @id @default(autoincrement())
-  productGroupId Int    @map("product_group_id")
-  approverUserId String @map("approver_user_id") @db.VarChar(36)
-  level          Int    @default(2) @db.TinyInt
-  createdAt      DateTime @default(now()) @map("created_at")
+  id                Int      @id @default(autoincrement())
+  productGroupId    Int      @map("product_group_id")
+  productCategoryId Int?     @map("product_category_id")
+  approverUserId    String   @map("approver_user_id") @db.VarChar(36)
+  level             Int      @default(2) @db.TinyInt
+  createdAt         DateTime @default(now()) @map("created_at")
 
-  productGroup ProductGroup @relation(fields: [productGroupId], references: [id])
-  approver     User         @relation(fields: [approverUserId], references: [id])
+  productGroup    ProductGroup     @relation(fields: [productGroupId], references: [id])
+  productCategory ProductCategory? @relation(fields: [productCategoryId], references: [id])
+  approver        User             @relation(fields: [approverUserId], references: [id])
 
   @@unique([productGroupId, level], name: "uq_group_level")
+  @@unique([productCategoryId, level], name: "uq_category_level")
   @@map("product_approver_mappings")
 }
 
@@ -110,6 +114,7 @@ model Document {
   productCategory  ProductCategory   @relation(fields: [productCategoryId], references: [id])
   approvals        DocumentApproval[]
   esignPositions   DocumentEsignPosition[]
+  footerPosition   DocumentFooterPosition?
   labelCheckForm   LabelCheckForm?
 
   @@index([status, deletedAt],          name: "idx_doc_status")
@@ -173,6 +178,21 @@ model DocumentEsignPosition {
   approval DocumentApproval @relation(fields: [approvalId], references: [id])
 
   @@map("document_esign_positions")
+}
+
+model DocumentFooterPosition {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  documentId String   @unique @map("document_id") @db.VarChar(36)
+  pageNumber Int      @default(1) @map("page_number")
+  xPercent   Decimal  @map("x_percent") @db.Decimal(6, 3)
+  yPercent   Decimal  @map("y_percent") @db.Decimal(6, 3)
+  widthPt    Decimal  @map("width_pt") @db.Decimal(7, 2)
+  heightPt   Decimal  @map("height_pt") @db.Decimal(7, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id])
+
+  @@map("document_footer_positions")
 }
 
 model SystemSetting {

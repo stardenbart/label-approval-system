@@ -4,34 +4,30 @@
 /**
  * Product Category Import/Export (Excel .xlsx)
  *
- * Behavior confirmed with requester (2026-07-02):
+ * Behavior:
  *   - Format: .xlsx only.
- *   - Import is UPSERT-ONLY: rows in the DB that are NOT present in the
- *     uploaded file are left untouched (never deactivated or deleted).
- *   - Matching key: `productCode` (case-insensitive — normalized to
- *     uppercase before comparing/writing, matching the unique DB constraint
- *     added in migration 20260702000000_uploader_role_footer_import).
+ *   - Import is UPSERT-ONLY: rows in the DB not present in the file are left untouched.
+ *   - Matching key: productCode (normalized to uppercase).
+ *   - NEW: if a Group Code in column A does not exist in the DB,
+ *     the group is automatically created (name = code, editable via UI after).
  *
- * Column layout (export produces this; import expects this):
- *   A: Group Code      (must match an existing product_groups.code)
+ * Column layout:
+ *   A: Group Code      (existing OR new — auto-created if not found)
  *   B: Category Name
- *   C: Sub Group       (optional, blank allowed)
- *   D: Product Code    (5 characters, unique — the upsert key)
- *   E: Active          (TRUE/FALSE, defaults to TRUE if blank)
+ *   C: Sub Group       (optional)
+ *   D: Product Code    (upsert key, case-insensitive)
+ *   E: Active          (TRUE/FALSE, defaults TRUE if blank)
  *
- * Design note: import is row-independent and partial-success by design — one
- * bad row (unknown group code, malformed product code) is reported as an
- * error for that row only, and does not block the other valid rows in the
- * same file. This matches how the rest of this codebase treats bulk
- * operations (e.g. seed.js uses per-row upsert, not all-or-nothing).
+ * Return: { created, updated, groupsAutoCreated, newGroupCodes, errors, totalRows }
  */
 
-const XLSX = require('xlsx');
+const XLSX   = require('xlsx');
 const { prisma } = require('../config/prisma');
+const logger     = require('../config/logger');
 
 const HEADER = ['Group Code', 'Category Name', 'Sub Group', 'Product Code', 'Active'];
 
-function normalizeProductCode(raw) {
+function normalizeCode(raw) {
   return String(raw || '').trim().toUpperCase();
 }
 
@@ -41,11 +37,7 @@ function parseActive(raw) {
   return !['false', '0', 'no', 'n', 'tidak', 'inactive'].includes(s);
 }
 
-/**
- * Export all product categories (including inactive ones — the export is
- * meant as a full round-trippable snapshot, not just what's currently active)
- * as an .xlsx buffer.
- */
+// ─── Export ───────────────────────────────────────────────────────
 async function exportToExcel() {
   const categories = await prisma.productCategory.findMany({
     include: { group: true },
@@ -66,76 +58,108 @@ async function exportToExcel() {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Product Categories');
 
+  // Instruction sheet
+  const instructions = [
+    ['PETUNJUK IMPORT / EXPORT'],
+    [''],
+    ['• Group Code baru otomatis dibuat jika belum ada di database.'],
+    ['  Nama grup = kode itu sendiri — ubah nama via UI setelah import.'],
+    ['• Import bersifat UPSERT-ONLY: data lama yang tidak ada di file tetap ada.'],
+    ['• Matching key: Product Code (case-insensitive).'],
+    ['• Kolom Active: TRUE/FALSE atau Y/N. Kosong = TRUE.'],
+    ['• Baris dengan Category Name kosong diabaikan otomatis.'],
+    ['• Maksimal 5000 baris per file.'],
+  ];
+  const wsInfo = XLSX.utils.aoa_to_sheet(instructions);
+  wsInfo['!cols'] = [{ wch: 70 }];
+  XLSX.utils.book_append_sheet(workbook, wsInfo, 'Petunjuk');
+
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
-/**
- * Import categories from an .xlsx buffer. Upsert-only by productCode.
- * Returns { created, updated, errors: [{ row, message }] }.
- */
+// ─── Import ───────────────────────────────────────────────────────
 async function importFromExcel(fileBuffer) {
   let workbook;
   try {
     workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-  } catch (e) {
+  } catch {
     const err = new Error('File is not a valid .xlsx workbook');
-    err.status = 400;
-    err.code = 'INVALID_FILE_TYPE';
-    throw err;
+    err.status = 400; err.code = 'INVALID_FILE_TYPE'; throw err;
   }
 
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const sheet   = workbook.Sheets[workbook.SheetNames[0]];
   const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
 
   if (rawRows.length === 0) {
     const err = new Error('Excel file has no data rows');
-    err.status = 400;
-    err.code = 'EMPTY_FILE';
-    throw err;
+    err.status = 400; err.code = 'EMPTY_FILE'; throw err;
   }
   if (rawRows.length > 5000) {
     const err = new Error('Import is limited to 5000 rows per file');
-    err.status = 400;
-    err.code = 'TOO_MANY_ROWS';
-    throw err;
+    err.status = 400; err.code = 'TOO_MANY_ROWS'; throw err;
   }
 
-  // Pre-load groups once (small table) instead of a query per row.
-  const groups = await prisma.productGroup.findMany();
-  const groupByCode = new Map(groups.map(g => [g.code.toUpperCase(), g]));
+  // Pre-load existing groups (small table, load once)
+  const existingGroups = await prisma.productGroup.findMany();
+  const groupByCode    = new Map(existingGroups.map(g => [g.code.toUpperCase(), g]));
 
-  let created = 0;
-  let updated = 0;
-  const errors = [];
+  let created           = 0;
+  let updated           = 0;
+  let groupsAutoCreated = 0;
+  const newGroupCodes   = [];
+  const errors          = [];
 
-  // Sequential, not Promise.all: keeps error reporting deterministic
-  // (row N failing shouldn't race with row N+1's DB write) and avoids
-  // opening 5000 concurrent DB connections.
   for (let i = 0; i < rawRows.length; i++) {
-    const excelRowNumber = i + 2; // +1 for 0-index, +1 for header row
-    const row = rawRows[i];
+    const excelRow    = i + 2;
+    const row         = rawRows[i];
+    const groupCode   = normalizeCode(row['Group Code']);
+    const name        = String(row['Category Name'] || '').trim();
+    const subGroup    = String(row['Sub Group'] || '').trim() || null;
+    const productCode = normalizeCode(row['Product Code']);
+    const isActive    = parseActive(row['Active']);
 
-    const groupCode    = String(row['Group Code'] || '').trim().toUpperCase();
-    const name          = String(row['Category Name'] || '').trim();
-    const subGroupRaw   = row['Sub Group'];
-    const subGroup      = subGroupRaw ? String(subGroupRaw).trim() : null;
-    const productCode   = normalizeProductCode(row['Product Code']);
-    const isActive       = parseActive(row['Active']);
+    // Skip blank rows silently
+    if (!name) continue;
 
-    if (!name) {
-      errors.push({ row: excelRowNumber, message: 'Category Name is required' });
+    // Validation
+    if (!groupCode) {
+      errors.push({ row: excelRow, message: 'Group Code must be filled' });
+      continue;
+    }
+    if (!productCode) {
+      errors.push({ row: excelRow, message: 'Product Code must be filled' });
       continue;
     }
     if (productCode.length > 100) {
-      errors.push({ row: excelRowNumber, message: `Product Code must not exceed 100 characters (got "${productCode}")` });
-      continue;
-    }
-    const group = groupByCode.get(groupCode);
-    if (!group) {
-      errors.push({ row: excelRowNumber, message: `Unknown Group Code "${row['Group Code']}" — create the group first` });
+      errors.push({ row: excelRow, message: 'Product Code is too long (max 100 characters): "' + productCode + '"' });
       continue;
     }
 
+    // Auto-create group if not found
+    let group = groupByCode.get(groupCode);
+    if (!group) {
+      try {
+        group = await prisma.productGroup.create({
+          data: { code: groupCode, name: groupCode, isActive: true },
+        });
+        groupByCode.set(groupCode, group);
+        groupsAutoCreated++;
+        newGroupCodes.push(groupCode);
+        logger.info('[import] Auto-created product group: ' + groupCode);
+      } catch (createErr) {
+        // Race condition: handle unique constraint violation (P2002)
+        if (createErr.code === 'P2002') {
+          const refreshed = await prisma.productGroup.findFirst({ where: { code: groupCode } });
+          if (refreshed) { group = refreshed; groupByCode.set(groupCode, group); }
+          else { errors.push({ row: excelRow, message: 'Failed to create group "' + groupCode + '": ' + createErr.message }); continue; }
+        } else {
+          errors.push({ row: excelRow, message: 'Failed to create group "' + groupCode + '": ' + createErr.message });
+          continue;
+        }
+      }
+    }
+
+    // Upsert category by productCode
     try {
       const existing = await prisma.productCategory.findFirst({ where: { productCode } });
       if (existing) {
@@ -150,12 +174,17 @@ async function importFromExcel(fileBuffer) {
         });
         created++;
       }
-    } catch (e) {
-      errors.push({ row: excelRowNumber, message: e.message || 'Unknown error writing this row' });
+    } catch (dbErr) {
+      errors.push({ row: excelRow, message: dbErr.message || 'Unknown error writing this row' });
     }
   }
 
-  return { created, updated, errors, totalRows: rawRows.length };
+  logger.info(
+    '[import] done — ' + created + ' created, ' + updated + ' updated, ' +
+    groupsAutoCreated + ' groups auto-created, ' + errors.length + ' errors'
+  );
+
+  return { created, updated, groupsAutoCreated, newGroupCodes, errors, totalRows: rawRows.length };
 }
 
 module.exports = { exportToExcel, importFromExcel };

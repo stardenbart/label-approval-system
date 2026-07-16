@@ -15,6 +15,7 @@ export default function ApprovalPage() {
   const [nextApproverId, setNextApproverId] = useState('');
   const [approverSearch, setApproverSearch] = useState('');
   const [position,       setPosition]      = useState(null);
+  const [footerPosition, setFooterPosition] = useState(null);
   const [submitting,     setSubmitting]    = useState(false);
   const [declineMode,    setDeclineMode]   = useState(false);
   const [declineNotes,   setDeclineNotes]  = useState('');
@@ -37,6 +38,12 @@ export default function ApprovalPage() {
   const documentId   = approvalData?.documentId;
   const isFinalLevel = approvalData?.isFinalLevel ?? false;
   const document     = approvalData?.document;
+  const approvalLevel = Number(approvalData?.approvalLevel ?? 1);
+
+  // Footer stamp (ID Regulatory / Nama Label / Nama File): locked after Level 0.
+  useEffect(() => {
+    setFooterPosition(approvalData?.footerPosition || null);
+  }, [approvalData]);
 
   // ── Pre-fetch QR stamp sebagai blob URL ────────────────────────
   // QR adalah image PNG statis — aman di-prefetch di parent.
@@ -90,6 +97,20 @@ export default function ApprovalPage() {
     maxWidthPt: parseFloat(settings.qr_max_width_pt || 200),
   } : null;
 
+  const footerDefaults = approvalData?.footerPosition || (settings ? {
+    xPercent:   parseFloat(settings.footer_default_x_percent || 3),
+    yPercent:   parseFloat(settings.footer_default_y_percent || 97),
+    widthPt:    parseFloat(settings.footer_default_width_pt  || 220),
+    heightPt:   parseFloat(settings.footer_default_height_pt || 30),
+    pageNumber: parseInt(settings.footer_default_page        || 1),
+  } : null);
+
+  const footerPreviewLines = document ? [
+    `ID Regulatory: ${document.regulatoryId}`,
+    `Nama Label: ${document.labelName}`,
+    `Nama File: ${document.fileNameOriginal || ''}`,
+  ] : [];
+
   // ── Actions ────────────────────────────────────────────────────
   async function handleApprove() {
     if (!isFinalLevel && !nextApproverId) {
@@ -102,6 +123,9 @@ export default function ApprovalPage() {
         notes:          notes.trim() || undefined,
         nextApproverId: isFinalLevel ? undefined : nextApproverId,
         position:       position    || undefined,
+        // Footer stamp position can only be set at Level 0 — the server
+        // rejects it otherwise, but avoid even sending it for locked levels.
+        footerPosition: approvalLevel === 0 ? (footerPosition || undefined) : undefined,
       });
       toast.success(isFinalLevel ? 'Final document approved!' : 'Document approved and forwarded to next approver!');
       navigate('/my-pending');
@@ -152,8 +176,6 @@ export default function ApprovalPage() {
   }
 
   const canApprove = isFinalLevel || !!nextApproverId;
-
-  const approvalLevel = Number(approvalData?.approvalLevel ?? 1);
 
   let pdfPreviewUrl = `/documents/${documentId}/original`;
   if (approvalLevel === 1) {
@@ -208,13 +230,27 @@ export default function ApprovalPage() {
               pdfUrl dikirim sebagai path relatif tanpa '/api' prefix — ESignCanvas
               yang normalize dan strip prefix sesuai axios baseURL. */}
           {documentId && qrDefaults ? (
-            <ESignCanvas
-              pdfUrl={pdfPreviewUrl}
-              qrDataUrl={qrDataUrl}
-              defaults={qrDefaults}
-              limits={qrLimits}
-              onChange={setPosition}
-            />
+            <>
+              <ESignCanvas
+                pdfUrl={pdfPreviewUrl}
+                qrDataUrl={qrDataUrl}
+                defaults={qrDefaults}
+                limits={qrLimits}
+                onChange={setPosition}
+                footerBox={footerDefaults ? {
+                  enabled:      true,
+                  draggable:    approvalLevel === 0,
+                  defaults:     footerDefaults,
+                  onChange:     setFooterPosition,
+                  previewLines: footerPreviewLines,
+                } : undefined}
+              />
+              {approvalLevel !== 0 && (
+                <p className="text-xs text-amber-600 mt-2">
+                  Posisi stamp footer (ID Regulatory / Nama Label / Nama File) terkunci — sudah diset oleh Staff Regulatory di Level 0.
+                </p>
+              )}
+            </>
           ) : (
             <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg border border-dashed border-gray-300">
               <Loader2 size={24} className="animate-spin text-brand-400" />

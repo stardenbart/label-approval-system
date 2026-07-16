@@ -20,6 +20,7 @@ const notifService     = require('../services/notification.service');
 const emailService     = require('../services/email.service');
 const logger           = require('../config/logger');
 const { STORAGE_PATH } = require('../middleware/upload');
+const { resolveLevel0Approver } = require('../services/approver-resolution.service');
 
 const APPROVAL_SELECT = {
   id: true, level: true, status: true,
@@ -40,6 +41,14 @@ const positionSchema = Joi.object({
   yPercent:   Joi.number().min(0).max(100).required(),
   widthPt:    Joi.number().min(10).max(500).required(),
   heightPt:   Joi.number().min(10).max(500).required(),
+}).optional().allow(null);
+
+const footerPositionSchema = Joi.object({
+  pageNumber: Joi.number().integer().min(1).default(1),
+  xPercent:   Joi.number().min(0).max(100).required(),
+  yPercent:   Joi.number().min(0).max(100).required(),
+  widthPt:    Joi.number().min(50).max(400).required(),
+  heightPt:   Joi.number().min(15).max(100).required(),
 }).optional().allow(null);
 
 exports.list = async (req, res, next) => {
@@ -166,8 +175,8 @@ exports.upload = async (req, res, next) => {
     //  - 'uploader': new role, uploads WITHOUT e-sign. Level 0 is created as
     //    PENDING and routed to whichever user is mapped as Staff RnI
     //    (ProductApproverMapping level 0) for the document's product group.
-    if (!['superadmin', 'uploader'].includes(req.user.role)) {
-      return res.status(403).json({ success: false, message: 'Only Staff RnI or Uploader can upload documents', code: 'FORBIDDEN' });
+    if (!['superadmin', 'uploader', 'admin'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only Staff Regulatory or Uploader can upload documents', code: 'FORBIDDEN' });
     }
     const isUploaderRole = req.user.role === 'uploader';
 
@@ -176,8 +185,11 @@ exports.upload = async (req, res, next) => {
       productCategoryId: Joi.number().integer().required(),
       tanggalTerima:     Joi.date().required(),
       tanggalPeriksa:    Joi.date().required(),
-      // position sent as JSON string from multipart/form-data
+      // position / footerPosition sent as JSON strings from multipart/form-data
       position:          Joi.string().optional().allow('', null),
+      footerPosition:    Joi.string().optional().allow('', null),
+      // uploader-role only: manual override of the suggested Level-0 approver
+      targetApproverId:  Joi.string().uuid().optional().allow('', null),
     });
     const { error: metaErr, value } = metaSchema.validate(req.body);
     if (metaErr) return res.status(400).json({ success: false, message: metaErr.details[0].message });
@@ -189,6 +201,15 @@ exports.upload = async (req, res, next) => {
         const { error: posErr, value: posVal } = positionSchema.validate(parsed);
         if (!posErr) position = posVal;
       } catch { /* ignore malformed position JSON */ }
+    }
+
+    let footerPosition = null;
+    if (value.footerPosition) {
+      try {
+        const parsed = JSON.parse(value.footerPosition);
+        const { error: footerErr, value: footerVal } = footerPositionSchema.validate(parsed);
+        if (!footerErr) footerPosition = footerVal;
+      } catch { /* ignore malformed footerPosition JSON */ }
     }
 
     if (!req.file) return res.status(400).json({ success: false, message: 'PDF file is required', code: 'FILE_MISSING' });
@@ -212,24 +233,49 @@ exports.upload = async (req, res, next) => {
     //   only one superadmin. Fixed by querying productApproverMapping first,
     //   falling back to any active admin/superadmin (including self, to
     //   unblock single-user testing).
-    // For the uploader role, the SAME pattern is reused one level down:
-    //   mapping level 0 = Staff RnI, fallback = any active superadmin.
-    const targetLevel = isUploaderRole ? 0 : 1;
+    // Uploader-role flow (per-product PIC mapping): the uploader may pick a
+    // specific Staff RnI via the "route to" dropdown (targetApproverId). If
+    // that pick is missing, stale, or invalid, fall back to the resolution
+    // chain: product-specific mapping → group mapping → any active superadmin.
     let approverForNextStep = null;
-    const mapping = await prisma.productApproverMapping.findFirst({
-      where:   { productGroupId: category.groupId, level: targetLevel },
-      include: { approver: true },
-    });
-    if (mapping?.approver?.isActive) {
-      approverForNextStep = mapping.approver;
-    }
-    if (!approverForNextStep) {
-      approverForNextStep = await prisma.user.findFirst({
-        where: isUploaderRole
-          ? { role: 'superadmin', isActive: true }
-          : { role: { in: ['superadmin', 'admin'] }, isActive: true },
+    let targetApproverSource = null;
+
+    if (isUploaderRole) {
+      if (value.targetApproverId) {
+        const picked = await prisma.user.findFirst({
+          where: { id: value.targetApproverId, isActive: true, role: { in: ['superadmin', 'admin', 'approver'] } },
+        });
+        if (picked) {
+          approverForNextStep = picked;
+          targetApproverSource = 'client';
+        }
+      }
+      if (!approverForNextStep) {
+        const resolved = await resolveLevel0Approver({
+          productCategoryId: category.id,
+          productGroupId:    category.groupId,
+        });
+        approverForNextStep = resolved.approver;
+        targetApproverSource = resolved.source;
+      }
+    } else {
+      // Legacy/direct flow — unchanged: Level-1 SPV via group mapping.
+      const mapping = await prisma.productApproverMapping.findFirst({
+        where:   { productGroupId: category.groupId, level: 1 },
+        include: { approver: true },
       });
+      if (mapping?.approver?.isActive) {
+        approverForNextStep = mapping.approver;
+        targetApproverSource = 'group';
+      }
+      if (!approverForNextStep) {
+        approverForNextStep = await prisma.user.findFirst({
+          where: { role: { in: ['superadmin', 'admin'] }, isActive: true },
+        });
+        targetApproverSource = 'fallback';
+      }
     }
+
     if (!approverForNextStep) {
       try { fs.unlinkSync(req.file.path); } catch (_) {}
       return res.status(400).json({
@@ -347,7 +393,7 @@ exports.upload = async (req, res, next) => {
           const freshDoc        = await prisma.document.findUnique({ where: { id: docUuid } });
           const level0Approval  = await prisma.documentApproval.findUnique({ where: { id: approvalLevel0Uuid } });
 
-          const signedLevel0Path = await pdfService.overlayEsign(freshDoc, level0Approval, position, false);
+          const signedLevel0Path = await pdfService.overlayEsign(freshDoc, level0Approval, position, false, footerPosition);
           const settings = await pdfService.getSettings();
 
           await prisma.$transaction(async (tx) => {
@@ -361,6 +407,16 @@ exports.upload = async (req, res, next) => {
                 yPercent: position?.yPercent ?? settings.defaultYPercent,
                 widthPt: position?.widthPt ?? settings.defaultWidthPt,
                 heightPt: position?.heightPt ?? settings.defaultHeightPt,
+              },
+            });
+            await tx.documentFooterPosition.create({
+              data: {
+                documentId: docUuid,
+                pageNumber: footerPosition?.pageNumber ?? settings.footerDefaultPage,
+                xPercent:   footerPosition?.xPercent   ?? settings.footerDefaultXPercent,
+                yPercent:   footerPosition?.yPercent   ?? settings.footerDefaultYPercent,
+                widthPt:    footerPosition?.widthPt    ?? settings.footerDefaultWidthPt,
+                heightPt:   footerPosition?.heightPt   ?? settings.footerDefaultHeightPt,
               },
             });
           });
@@ -389,7 +445,9 @@ exports.upload = async (req, res, next) => {
     await emailService.sendApprovalAssigned(spv.email, {
       docName: value.labelName, regulatoryId, approverName: spv.name,
     });
-    await auditService.log(req.user.id, 'DOCUMENT_UPLOADED', 'documents', docUuid, req.ip, { regulatoryId, viaUploaderRole: isUploaderRole });
+    await auditService.log(req.user.id, 'DOCUMENT_UPLOADED', 'documents', docUuid, req.ip, {
+      regulatoryId, viaUploaderRole: isUploaderRole, targetApproverSource,
+    });
 
     res.status(201).json({ success: true, data: { id: docUuid, regulatoryId, labelName: value.labelName } });
   } catch (err) { next(err); }

@@ -34,21 +34,22 @@ const { prisma } = require('../config/prisma');
 const logger     = require('../config/logger');
 
 /**
- * Footer stamp (added for the "footer e-sign" feature):
- * Drawn ONLY on the final signed copy (pathSignedFinal) — i.e. when
- * overlayEsign() is called with isFinalLevel = true. It is NOT drawn on
- * intermediate copies (pathSignedLevel0, pathSignedLevel1), per business
- * decision confirmed with the requester: footer only appears once every
- * approval level is complete, as a tamper-evident marker binding the
- * physical file to its DB record (regulatoryId, labelName, fileName).
+ * Footer stamp (ID Regulatory / Nama Label / Nama File):
+ * Drawn ONCE, at Level 0 (Staff Regulatory's own upload/approval step), at a
+ * position Staff Regulatory drags on-screen — same drag UX as the QR box.
+ * Because each subsequent level's overlay reads and rebuilds on top of the
+ * PREVIOUS level's already-stamped output file (see signing chain above),
+ * the footer drawn at Level 0 is physically baked into every later file —
+ * it is NEVER redrawn at level 1/2, which would create duplicate/overlapping
+ * text. See overlayEsign() below.
  *
- * Placed on EVERY page of the final PDF (not just the QR page), since the
- * whole point is "which record does this piece of paper belong to" —
- * a reader could be looking at any page.
+ * Placed on EVERY page of the PDF (not just the QR page), since the whole
+ * point is "which record does this piece of paper belong to" — a reader
+ * could be looking at any page.
  */
 const FOOTER_FONT_SIZE  = 7;
 const FOOTER_COLOR      = rgb(0.55, 0.55, 0.55); // gray
-const FOOTER_MARGIN_PT  = 18;
+const FOOTER_MARGIN_PT  = 18; // legacy fallback margin, used only if no position/default is resolvable
 const FOOTER_LINE_GAP   = 9;
 
 function truncate(str, max) {
@@ -56,7 +57,11 @@ function truncate(str, max) {
   return str.length > max ? str.slice(0, max - 1) + '…' : str;
 }
 
-async function drawFooter(pdfDoc, document) {
+/**
+ * @param {Object} footerPos - { pageNumber, xPercent, yPercent, widthPt, heightPt }
+ *                             (already resolved/validated by the caller)
+ */
+async function drawFooter(pdfDoc, document, footerPos) {
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const lines = [
     `ID Regulatory: ${document.regulatoryId}`,
@@ -65,15 +70,24 @@ async function drawFooter(pdfDoc, document) {
   ];
 
   for (const page of pdfDoc.getPages()) {
-    const { width } = page.getSize();
+    const { width, height } = page.getSize();
+    const xPt = footerPos ? (footerPos.xPercent / 100) * width : FOOTER_MARGIN_PT;
+    // Same convention as the QR box: xPercent/yPercent is the box's top-left
+    // corner (percent-of-page, top-left origin); subtract heightPt to land on
+    // the bottom of the box, which is where the 3-line block's baseline sits.
+    const yPt = footerPos
+      ? height - (footerPos.yPercent / 100) * height - footerPos.heightPt
+      : FOOTER_MARGIN_PT;
+    const maxWidth = footerPos ? footerPos.widthPt : width - FOOTER_MARGIN_PT * 2;
+
     lines.forEach((line, i) => {
       page.drawText(line, {
-        x: FOOTER_MARGIN_PT,
-        y: FOOTER_MARGIN_PT + (lines.length - 1 - i) * FOOTER_LINE_GAP,
+        x: xPt,
+        y: yPt + (lines.length - 1 - i) * FOOTER_LINE_GAP,
         size: FOOTER_FONT_SIZE,
         font,
         color: FOOTER_COLOR,
-        maxWidth: width - FOOTER_MARGIN_PT * 2,
+        maxWidth,
       });
     });
   }
@@ -91,8 +105,16 @@ async function getSettings() {
     defaultPage:     map.qr_default_page       || 1,
     defaultXPercent: map.qr_default_x_percent  || 85,
     defaultYPercent: map.qr_default_y_percent  || 5,
-    minWidthPt:      map.qr_min_width_pt       || 60,
+    minWidthPt:      map.qr_min_width_pt       || 10,
     maxWidthPt:      map.qr_max_width_pt       || 200,
+    // Footer stamp defaults — chosen to reproduce the old hardcoded bottom-left
+    // ~18pt margin look on an A4-ish (~595pt wide) page for documents that are
+    // never dragged (e.g. legacy behavior before this feature existed).
+    footerDefaultXPercent: map.footer_default_x_percent  || 3,
+    footerDefaultYPercent: map.footer_default_y_percent  || 97,
+    footerDefaultWidthPt:  map.footer_default_width_pt   || 220,
+    footerDefaultHeightPt: map.footer_default_height_pt  || 30,
+    footerDefaultPage:     map.footer_default_page       || 1,
   };
 }
 
@@ -104,6 +126,17 @@ function validatePosition(pos, settings) {
   const yPercent = Math.max(0, Math.min(100, pos.yPercent));
   const widthPt  = Math.max(settings.minWidthPt, Math.min(settings.maxWidthPt, pos.widthPt));
   const heightPt = Math.max(settings.minWidthPt, Math.min(settings.maxWidthPt, pos.heightPt));
+  return { pageNumber: pos.pageNumber || 1, xPercent, yPercent, widthPt, heightPt };
+}
+
+/**
+ * Validate and clamp footer position values
+ */
+function validateFooterPosition(pos) {
+  const xPercent = Math.max(0, Math.min(100, pos.xPercent));
+  const yPercent = Math.max(0, Math.min(100, pos.yPercent));
+  const widthPt  = Math.max(50, Math.min(400, pos.widthPt));
+  const heightPt = Math.max(15, Math.min(100, pos.heightPt));
   return { pageNumber: pos.pageNumber || 1, xPercent, yPercent, widthPt, heightPt };
 }
 
@@ -162,14 +195,19 @@ function resolveOutputFilename(level) {
  *                                 `.level` and `.qrPath` (already generated)
  * @param {Object|null} position - { pageNumber, xPercent, yPercent, widthPt, heightPt }
  *                                 or null to use system defaults
- * @param {boolean}     isFinalLevel - if true, also stamps the gray footer
- *                                 (ID Regulatory / Nama Label / Nama File)
- *                                 on every page. Caller is responsible for
- *                                 determining finality (see
- *                                 approval.controller.js resolveIsFinalLevel).
+ * @param {boolean}     isFinalLevel - unused by the footer stamp (see below);
+ *                                 kept for callers that still pass it.
+ * @param {Object|null} footerPosition - { pageNumber, xPercent, yPercent, widthPt, heightPt }
+ *                                 for the ID Regulatory/Nama Label/Nama File stamp,
+ *                                 or null to use system defaults. Only honored when
+ *                                 approval.level === 0 — Staff Regulatory is the only
+ *                                 level that sets this; it is then physically baked
+ *                                 into pathSignedLevel0 and carried forward unchanged
+ *                                 through every later level's rebuild (see module
+ *                                 header "Signing level chain").
  * @returns {string} absolute path to the newly written signed PDF
  */
-async function overlayEsign(document, approval, position, isFinalLevel = false) {
+async function overlayEsign(document, approval, position, isFinalLevel = false, footerPosition = null) {
   const settings = await getSettings();
 
   const pos = position
@@ -215,9 +253,21 @@ async function overlayEsign(document, approval, position, isFinalLevel = false) 
     height: pos.heightPt,
   });
 
-  if (isFinalLevel) {
-    await drawFooter(pdfDoc, document);
+  if (level === 0) {
+    const resolvedFooterPos = footerPosition
+      ? validateFooterPosition(footerPosition)
+      : {
+          pageNumber: settings.footerDefaultPage,
+          xPercent:   settings.footerDefaultXPercent,
+          yPercent:   settings.footerDefaultYPercent,
+          widthPt:    settings.footerDefaultWidthPt,
+          heightPt:   settings.footerDefaultHeightPt,
+        };
+    await drawFooter(pdfDoc, document, resolvedFooterPos);
   }
+  // Levels 1/2 draw nothing here — the footer is already physically baked
+  // into the source PDF this level reads from (see resolveSourcePath), so
+  // redrawing would create duplicate/overlapping text.
 
   const storageDir  = path.dirname(sourcePath);
   const outFilename = resolveOutputFilename(level);

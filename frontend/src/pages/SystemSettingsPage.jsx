@@ -46,6 +46,11 @@ export default function SystemSettingsPage() {
         qr_default_y_percent: parseFloat(form.qr_default_y_percent),
         qr_min_width_pt:      parseFloat(form.qr_min_width_pt),
         qr_max_width_pt:      parseFloat(form.qr_max_width_pt),
+        footer_default_x_percent: parseFloat(form.footer_default_x_percent),
+        footer_default_y_percent: parseFloat(form.footer_default_y_percent),
+        footer_default_width_pt:  parseFloat(form.footer_default_width_pt),
+        footer_default_height_pt: parseFloat(form.footer_default_height_pt),
+        footer_default_page:      parseInt(form.footer_default_page),
       });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       toast.success('Settings berhasil disimpan');
@@ -111,6 +116,17 @@ export default function SystemSettingsPage() {
                 <div className="grid grid-cols-2 gap-4">
                   {field('qr_min_width_pt', 'Minimum Width (pt)', 20, 100)}
                   {field('qr_max_width_pt', 'Maximum Width (pt)', 100, 400)}
+                </div>
+              </div>
+
+              <div className="border-t pt-4">
+                <h4 className="font-medium text-gray-700 mb-3 text-sm">Default Footer Stamp (ID Regulatory / Nama Label / Nama File)</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {field('footer_default_width_pt',  'Default Width (pt)',  50, 400)}
+                  {field('footer_default_height_pt', 'Default Height (pt)', 15, 100)}
+                  {field('footer_default_page',      'Default Page',     1, 99)}
+                  {field('footer_default_x_percent', 'X Default (%)', 0, 100, 0.5)}
+                  {field('footer_default_y_percent', 'Y Default (%)', 0, 100, 0.5)}
                 </div>
               </div>
 

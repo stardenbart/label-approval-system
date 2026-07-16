@@ -4,10 +4,11 @@
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const Joi    = require('joi');
-const { prisma }    = require('../config/prisma');
-const auditService  = require('../services/audit.service');
-const emailService  = require('../services/email.service');
-const notifService  = require('../services/notification.service');
+const { prisma }        = require('../config/prisma');
+const auditService      = require('../services/audit.service');
+const emailService      = require('../services/email.service');
+const notifService      = require('../services/notification.service');
+const { resolveLevel0Approver } = require('../services/approver-resolution.service');
 
 exports.list = async (req, res, next) => {
   try {
@@ -134,8 +135,9 @@ exports.getMappings = async (req, res, next) => {
   try {
     const mappings = await prisma.productApproverMapping.findMany({
       include: {
-        productGroup: true,
-        approver: { select: { id:true, name:true, email:true } },
+        productGroup:    true,
+        productCategory: { select: { id: true, name: true, productCode: true } },
+        approver:        { select: { id:true, name:true, email:true } },
       },
     });
     res.json({ success: true, data: mappings });
@@ -145,17 +147,40 @@ exports.getMappings = async (req, res, next) => {
 exports.setMapping = async (req, res, next) => {
   try {
     const { error, value } = Joi.object({
-      productGroupId: Joi.number().integer().required(),
-      approverUserId: Joi.string().uuid().required(),
-      level:          Joi.number().integer().min(0).max(2).default(2),
+      productGroupId:    Joi.number().integer().required(),
+      productCategoryId: Joi.number().integer().optional().allow(null),
+      approverUserId:    Joi.string().uuid().required(),
+      level:             Joi.number().integer().min(0).max(2).default(2),
     }).validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
 
-    const mapping = await prisma.productApproverMapping.upsert({
-      where:  { uq_group_level: { productGroupId: value.productGroupId, level: value.level } },
-      create: value,
-      update: { approverUserId: value.approverUserId },
-    });
+    if (value.productCategoryId && value.level !== 0) {
+      return res.status(400).json({ success: false, message: 'Product-specific mapping is only allowed at Level 0' });
+    }
+
+    if (value.productCategoryId) {
+      const category = await prisma.productCategory.findFirst({
+        where: { id: value.productCategoryId, groupId: value.productGroupId },
+      });
+      if (!category) {
+        return res.status(400).json({ success: false, message: 'Selected product does not belong to the selected group' });
+      }
+    }
+
+    let mapping;
+    if (value.productCategoryId) {
+      mapping = await prisma.productApproverMapping.upsert({
+        where:  { uq_category_level: { productCategoryId: value.productCategoryId, level: value.level } },
+        create: value,
+        update: { approverUserId: value.approverUserId },
+      });
+    } else {
+      mapping = await prisma.productApproverMapping.upsert({
+        where:  { uq_group_level: { productGroupId: value.productGroupId, level: value.level } },
+        create: { ...value, productCategoryId: null },
+        update: { approverUserId: value.approverUserId },
+      });
+    }
     res.json({ success: true, data: mapping });
   } catch (err) { next(err); }
 };
@@ -164,5 +189,47 @@ exports.deleteMapping = async (req, res, next) => {
   try {
     await prisma.productApproverMapping.delete({ where: { id: parseInt(req.params.id) } });
     res.json({ success: true, message: 'Mapping deleted' });
+  } catch (err) { next(err); }
+};
+
+// ─── Level-0 suggestion + candidates (any authenticated role, incl. uploader) ──
+
+exports.suggestLevel0Approver = async (req, res, next) => {
+  try {
+    const { error, value } = Joi.object({
+      productCategoryId: Joi.number().integer().required(),
+    }).validate(req.query);
+    if (error) return res.status(400).json({ success: false, message: error.details[0].message });
+
+    const category = await prisma.productCategory.findFirst({
+      where: { id: value.productCategoryId, isActive: true },
+    });
+    if (!category) return res.status(400).json({ success: false, message: 'Product category not found' });
+
+    const { approver, source } = await resolveLevel0Approver({
+      productCategoryId: category.id,
+      productGroupId:    category.groupId,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        source,
+        approver: approver
+          ? { id: approver.id, name: approver.name, email: approver.email, role: approver.role }
+          : null,
+      },
+    });
+  } catch (err) { next(err); }
+};
+
+exports.listApproverCandidates = async (req, res, next) => {
+  try {
+    const candidates = await prisma.user.findMany({
+      where:  { isActive: true, role: { in: ['superadmin', 'admin', 'approver'] } },
+      select: { id: true, name: true, email: true, role: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json({ success: true, data: candidates });
   } catch (err) { next(err); }
 };

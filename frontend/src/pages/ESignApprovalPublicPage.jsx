@@ -9,7 +9,7 @@ import axios from 'axios';
 const LEVEL_LABEL = {
   0: 'Staff (Self-Sign)',
   1: 'SPV',
-  2: 'Marketing (Final)',
+  2: 'Manager (Final)',
 };
 
 function levelLabel(level) {
@@ -44,7 +44,7 @@ function Row({ label, value }) {
 
 /**
  * Public verification page for a SPECIFIC approval's QR.
- * Each signer (Staff, SPV, Marketing/Final) has their own QR pointing here —
+ * Each signer (Staff, SPV, Manager/Final) has their own QR pointing here —
  * scanning it shows exactly who signed at that step, plus the document
  * identity and the full chain as supporting context.
  */

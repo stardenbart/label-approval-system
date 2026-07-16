@@ -16,6 +16,11 @@ async function main() {
     { key: 'qr_default_y_percent', value: '5',   description: 'Posisi Y default (% tinggi halaman dari bawah untuk PDF)' },
     { key: 'qr_min_width_pt',      value: '60',  description: 'Minimum ukuran QR (points)' },
     { key: 'qr_max_width_pt',      value: '200', description: 'Maksimum ukuran QR (points)' },
+    { key: 'footer_default_x_percent', value: '3',  description: 'Posisi X default stamp footer (% lebar halaman)' },
+    { key: 'footer_default_y_percent', value: '97', description: 'Posisi Y default stamp footer (% tinggi halaman dari atas)' },
+    { key: 'footer_default_width_pt',  value: '220', description: 'Lebar default stamp footer (PDF points)' },
+    { key: 'footer_default_height_pt', value: '30',  description: 'Tinggi default stamp footer (PDF points)' },
+    { key: 'footer_default_page',      value: '1',   description: 'Halaman default penempatan stamp footer' },
   ];
 
   for (const s of settings) {

@@ -13,6 +13,11 @@ const DEFAULTS = {
   qr_default_y_percent: '5',
   qr_min_width_pt:      '60',
   qr_max_width_pt:      '200',
+  footer_default_x_percent: '3',
+  footer_default_y_percent: '97',
+  footer_default_width_pt:  '220',
+  footer_default_height_pt: '30',
+  footer_default_page:      '1',
 };
 
 exports.getAll = async (req, res, next) => {
@@ -33,6 +38,11 @@ exports.update = async (req, res, next) => {
       qr_default_y_percent: Joi.number().min(0).max(100),
       qr_min_width_pt:      Joi.number().min(20).max(100),
       qr_max_width_pt:      Joi.number().min(100).max(400),
+      footer_default_x_percent: Joi.number().min(0).max(100),
+      footer_default_y_percent: Joi.number().min(0).max(100),
+      footer_default_width_pt:  Joi.number().min(50).max(400),
+      footer_default_height_pt: Joi.number().min(15).max(100),
+      footer_default_page:      Joi.number().integer().min(1),
     });
     const { error, value } = schema.validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });

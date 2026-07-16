@@ -27,8 +27,16 @@ const positionSchema = Joi.object({
   pageNumber: Joi.number().integer().min(1).required(),
   xPercent:   Joi.number().min(0).max(100).required(),
   yPercent:   Joi.number().min(0).max(100).required(),
-  widthPt:    Joi.number().min(60).max(200).required(),
-  heightPt:   Joi.number().min(60).max(200).required(),
+  widthPt:    Joi.number().min(10).max(200).required(),
+  heightPt:   Joi.number().min(10).max(200).required(),
+});
+
+const footerPositionSchema = Joi.object({
+  pageNumber: Joi.number().integer().min(1).required(),
+  xPercent:   Joi.number().min(0).max(100).required(),
+  yPercent:   Joi.number().min(0).max(100).required(),
+  widthPt:    Joi.number().min(50).max(400).required(),
+  heightPt:   Joi.number().min(15).max(100).required(),
 });
 
 // ─── Helper: determine if an approval is at the final level ──────────────────
@@ -64,12 +72,19 @@ exports.approve = async (req, res, next) => {
       notes:          Joi.string().max(2000).allow('', null),
       nextApproverId: Joi.string().uuid().when('$requireNext', { is: true, then: Joi.required() }),
       position:       positionSchema.optional(),
+      footerPosition: footerPositionSchema.optional(),
     });
     const { error, value } = schema.validate(req.body, { context: { requireNext: !isFinalLevel } });
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
 
     if (!isFinalLevel && !value.nextApproverId) {
       return res.status(400).json({ success: false, message: 'Next approver is required for non-final levels' });
+    }
+
+    // Footer stamp position can only be set once, at Level 0 (Staff Regulatory).
+    // Levels 1/2 must not move it — enforce server-side, not just hide it in the UI.
+    if (value.footerPosition && approval.level !== 0) {
+      return res.status(400).json({ success: false, message: 'Footer stamp position can only be set at Level 0' });
     }
 
     let nextApprover = null;
@@ -98,9 +113,12 @@ exports.approve = async (req, res, next) => {
 
     // Process PDF overlay BEFORE transaction — rollback file on TX failure
     const position = value.position || null;
+    // Only meaningful at level 0 — pdfService ignores it for level > 0 anyway,
+    // but only forward it there defensively (matches the level check above).
+    const footerPosition = approval.level === 0 ? (value.footerPosition || null) : null;
     let signedPath = null;
     try {
-      signedPath = await pdfService.overlayEsign(approval.document, approval, position, isFinalLevel);
+      signedPath = await pdfService.overlayEsign(approval.document, approval, position, isFinalLevel, footerPosition);
     } catch (pdfErr) {
       logger.error('PDF overlay failed:', pdfErr);
       return res.status(500).json({ success: false, message: 'Failed to process PDF signature', code: 'PDF_ERROR' });
@@ -131,6 +149,22 @@ exports.approve = async (req, res, next) => {
               widthPt:    value.position.widthPt,
               heightPt:   value.position.heightPt,
             },
+          });
+        }
+
+        if (approval.level === 0) {
+          const footerSettings = await pdfService.getSettings();
+          const footerData = {
+            pageNumber: footerPosition?.pageNumber ?? footerSettings.footerDefaultPage,
+            xPercent:   footerPosition?.xPercent   ?? footerSettings.footerDefaultXPercent,
+            yPercent:   footerPosition?.yPercent   ?? footerSettings.footerDefaultYPercent,
+            widthPt:    footerPosition?.widthPt    ?? footerSettings.footerDefaultWidthPt,
+            heightPt:   footerPosition?.heightPt   ?? footerSettings.footerDefaultHeightPt,
+          };
+          await tx.documentFooterPosition.upsert({
+            where:  { documentId: approval.documentId },
+            create: { documentId: approval.documentId, ...footerData },
+            update: footerData,
           });
         }
 
@@ -259,7 +293,7 @@ exports.suggestedApprovers = async (req, res, next) => {
   try {
     const approval = await prisma.documentApproval.findFirst({
       where:   { id: req.params.approvalId },
-      include: { document: { include: { productCategory: true } } },
+      include: { document: { include: { productCategory: true, footerPosition: true } } },
     });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
     if (approval.approverId !== req.user.id && req.user.role !== 'superadmin') {
@@ -296,11 +330,21 @@ exports.suggestedApprovers = async (req, res, next) => {
         approvalLevel: approval.level,
         isFinalLevel,
         document: {
-          id:           approval.document.id,
-          labelName:    approval.document.labelName,
-          regulatoryId: approval.document.regulatoryId,
-          status:       approval.document.status,
+          id:               approval.document.id,
+          labelName:        approval.document.labelName,
+          regulatoryId:     approval.document.regulatoryId,
+          fileNameOriginal: approval.document.fileNameOriginal,
+          status:           approval.document.status,
         },
+        footerPosition: approval.document.footerPosition
+          ? {
+              pageNumber: approval.document.footerPosition.pageNumber,
+              xPercent:   Number(approval.document.footerPosition.xPercent),
+              yPercent:   Number(approval.document.footerPosition.yPercent),
+              widthPt:    Number(approval.document.footerPosition.widthPt),
+              heightPt:   Number(approval.document.footerPosition.heightPt),
+            }
+          : null,
         suggested,
         others,
       },

@@ -288,6 +288,6 @@ ALTER TABLE `documents` ADD COLUMN `path_signed_level0` VARCHAR(500) NULL AFTER 
 
 ALTER TABLE `document_approvals` ADD COLUMN `qr_path` VARCHAR(500) NULL AFTER `path_signed`;
 
-ALTER TABLE `users` MODIFY COLUMN `role` ENUM(`superadmin`, `admin`, `approver`, `viewer`, `uploader`) NOT NULL;
+ALTER TABLE `users` MODIFY COLUMN `role` ENUM('superadmin', 'admin', 'approver', 'viewer', 'uploader') NOT NULL;
 
 ALTER TABLE `product_categories` ADD UNIQUE INDEX `product_categories_product_code_key` (`product_code`);

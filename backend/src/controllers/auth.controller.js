@@ -73,11 +73,13 @@ function generateTokens(user) {
 }
 
 function setRefreshCookie(res, token) {
+  const isHttps = process.env.NODE_ENV === 'production' && process.env.USE_HTTPS === "true";
+
   res.cookie('refresh_token', token, {
     httpOnly: true,
-    secure:   process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge:   7 * 24 * 60 * 60 * 1000, // 7 days
+    secure:   isHttps,
+    sameSite: isHttps ? 'none' : 'lax',
+    maxAge:   7 * 24 * 60 * 60 * 1000,
     path:     '/api/auth',
   });
 }

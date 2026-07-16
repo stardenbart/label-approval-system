@@ -1,5 +1,5 @@
 // frontend/src/pages/DocumentUploadPage.jsx
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, Link }       from 'react-router-dom';
 import { useQuery }                from '@tanstack/react-query';
 import { Upload, FileText, X, Loader2, AlertTriangle, AlertCircle, PenTool, Info } from 'lucide-react';
@@ -25,10 +25,15 @@ export default function DocumentUploadPage() {
     tanggalTerima:     '',
     tanggalPeriksa:    '',
   });
-  const [position,   setPosition]   = useState(null);
+  const [position,       setPosition]       = useState(null);
+  const [footerPosition, setFooterPosition] = useState(null);
   const [loading,    setLoading]    = useState(false);
   const [dragOver,   setDragOver]   = useState(false);
   const [showCanvas, setShowCanvas] = useState(false);
+
+  // ── Route to (Staff Regulatory) — uploader role only ─────────────────────
+  const [targetApproverId, setTargetApproverId] = useState('');
+  const [manuallyChanged,  setManuallyChanged]  = useState(false);
 
   const { data: categoriesData } = useQuery({
     queryKey: ['product-categories'],
@@ -46,6 +51,32 @@ export default function DocumentUploadPage() {
     enabled:  !isUploaderRole, // QR position settings are irrelevant — uploader never sees the canvas
   });
 
+  const { data: candidatesData } = useQuery({
+    queryKey: ['approver-candidates'],
+    queryFn:  () => api.get('/users/approver-candidates').then(r => r.data.data),
+    enabled:  isUploaderRole,
+  });
+
+  const { data: suggestedApprover } = useQuery({
+    queryKey: ['suggest-level0', form.productCategoryId],
+    queryFn:  () => api.get('/users/mappings/suggest-level0', {
+      params: { productCategoryId: form.productCategoryId },
+    }).then(r => r.data.data),
+    enabled: isUploaderRole && !!form.productCategoryId,
+  });
+
+  // Pre-fill targetApproverId with the suggestion unless the uploader already
+  // made a deliberate manual choice for the currently selected category.
+  useEffect(() => {
+    if (!isUploaderRole) return;
+    if (manuallyChanged) return;
+    setTargetApproverId(suggestedApprover?.approver?.id || '');
+  }, [suggestedApprover, isUploaderRole, manuallyChanged]);
+
+  useEffect(() => {
+    setManuallyChanged(false);
+  }, [form.productCategoryId]);
+
   // Required approver level differs by role: uploader needs a Level 0 (Staff
   // RnI) mapping; direct superadmin upload needs a Level 1 (SPV) mapping.
   // Getting this wrong here doesn't break the backend (it has its own
@@ -53,9 +84,14 @@ export default function DocumentUploadPage() {
   // configured" warning to an uploader when the actual missing piece is
   // Staff RnI — so this must track the backend's targetLevel logic exactly.
   const requiredLevel   = isUploaderRole ? 0 : 1;
-  const approverLabel   = isUploaderRole ? 'Staff RnI (Level 0)' : 'SPV (Level 1)';
+  const approverLabel   = isUploaderRole ? 'Staff Regulatory (Level 0)' : 'SPV (Level 1)';
   const requiredMappings = (mappingsData || []).filter(m => m.level === requiredLevel);
-  const hasNoRequiredMapping = mappingsData !== undefined && requiredMappings.length === 0;
+  // For the uploader role, a manually-picked or suggested target approver is
+  // sufficient to proceed even without a group/category mapping on file — the
+  // mapping-based warning becomes informational only in that case.
+  const hasNoRequiredMapping = isUploaderRole
+    ? !targetApproverId && !suggestedApprover?.approver
+    : mappingsData !== undefined && requiredMappings.length === 0;
 
   const selectedCategory = (categoriesData || []).find(
     c => c.id === parseInt(form.productCategoryId)
@@ -66,7 +102,7 @@ export default function DocumentUploadPage() {
     : true;
 
   const grouped = (categoriesData || []).reduce((acc, cat) => {
-    const key = cat.group?.name || 'Lainnya';
+    const key = cat.group?.name || 'Others';
     if (!acc[key]) acc[key] = [];
     acc[key].push(cat);
     return acc;
@@ -85,6 +121,21 @@ export default function DocumentUploadPage() {
     maxWidthPt: parseFloat(settings.qr_max_width_pt || 200),
   } : null;
 
+  const footerDefaults = settings ? {
+    xPercent:   parseFloat(settings.footer_default_x_percent || 3),
+    yPercent:   parseFloat(settings.footer_default_y_percent || 97),
+    widthPt:    parseFloat(settings.footer_default_width_pt  || 220),
+    heightPt:   parseFloat(settings.footer_default_height_pt || 30),
+    pageNumber: parseInt(settings.footer_default_page        || 1),
+  } : null;
+
+  const selectedFileLabel = file?.name || '(file belum dipilih)';
+  const footerPreviewLines = [
+    'ID Regulatory: (di-generate saat upload)',
+    `Nama Label: ${form.labelName || '(belum diisi)'}`,
+    `Nama File: ${selectedFileLabel}`,
+  ];
+
   function handleFileDrop(e) {
     e.preventDefault();
     setDragOver(false);
@@ -93,8 +144,8 @@ export default function DocumentUploadPage() {
   }
 
   function validateAndSetFile(f) {
-    if (f.type !== 'application/pdf') { toast.error('Hanya file PDF yang diizinkan'); return; }
-    if (f.size > 10 * 1024 * 1024)   { toast.error('Ukuran file maksimal 10MB'); return; }
+    if (f.type !== 'application/pdf') { toast.error('PDF only'); return; }
+    if (f.size > 10 * 1024 * 1024)   { toast.error('PDF max size 10MB'); return; }
     setFile(f);
     // Uploader role never e-signs, so never show the position canvas for them.
     setShowCanvas(!isUploaderRole);
@@ -110,7 +161,7 @@ export default function DocumentUploadPage() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!file) { toast.error('Pilih file PDF terlebih dahulu'); return; }
+    if (!file) { toast.error('Select PDF first'); return; }
 
     const fd = new FormData();
     fd.append('file',              file);
@@ -119,11 +170,18 @@ export default function DocumentUploadPage() {
     fd.append('tanggalTerima',     form.tanggalTerima);
     fd.append('tanggalPeriksa',    form.tanggalPeriksa);
 
-    // Position is only meaningful for the direct-sign (superadmin) flow —
-    // the backend ignores it for the uploader flow anyway (nothing is
-    // stamped at upload time), but we avoid sending stale/irrelevant data.
+    // Position / footerPosition are only meaningful for the direct-sign
+    // (superadmin) flow — the backend ignores them for the uploader flow
+    // anyway (nothing is stamped at upload time), but we avoid sending
+    // stale/irrelevant data.
     if (position && !isUploaderRole) {
       fd.append('position', JSON.stringify(position));
+    }
+    if (footerPosition && !isUploaderRole) {
+      fd.append('footerPosition', JSON.stringify(footerPosition));
+    }
+    if (isUploaderRole && targetApproverId) {
+      fd.append('targetApproverId', targetApproverId);
     }
 
     setLoading(true);
@@ -133,18 +191,18 @@ export default function DocumentUploadPage() {
       });
       toast.success(
         isUploaderRole
-          ? `✅ Dokumen berhasil diupload! ID: ${data.data.regulatoryId} — menunggu review Staff RnI.`
-          : `✅ Dokumen berhasil diupload! ID: ${data.data.regulatoryId}`
+          ? `Document successfully uploaded! ID: ${data.data.regulatoryId} — waiting for Staff Regulatory review.`
+          : `Document successfully uploaded! ID: ${data.data.regulatoryId}`
       );
       navigate(`/documents/${data.data.id}`);
     } catch (err) {
       const code    = err.response?.data?.code;
-      const message = err.response?.data?.message || 'Upload gagal';
+      const message = err.response?.data?.message || 'Upload fail';
       if (code === 'NO_APPROVER') {
         toast.error(
           isUploaderRole
-            ? 'Staff RnI belum dikonfigurasi. Atur Product-Approver Mapping (Level 0) di User Management dulu.'
-            : 'SPV belum dikonfigurasi. Atur Product-Approver Mapping (Level 1) di User Management dulu.'
+            ? 'Staff Regulatory approver have not configured yet.'
+            : 'SPV approver have not configured yet.'
         );
       } else {
         toast.error(message);
@@ -162,7 +220,7 @@ export default function DocumentUploadPage() {
         <h2 className="text-xl font-bold text-gray-900">Upload Document</h2>
         <p className="text-sm text-gray-500 mt-0.5">
           {isUploaderRole
-            ? 'Upload Design Label Regulatory — PDF, Max 10MB. Dokumen akan diteruskan ke Staff RnI untuk ditandatangani (Anda tidak melakukan e-sign).'
+            ? 'Upload Design Label Regulatory — PDF, Max 10MB. Document will be forwarded to Staff Regulatory.'
             : 'Upload Design Label Regulatory — PDF, Max 10MB'}
         </p>
       </div>
@@ -244,8 +302,7 @@ export default function DocumentUploadPage() {
           <div className="card p-4 bg-blue-50 border border-blue-200 flex items-start gap-3">
             <Info size={16} className="text-blue-500 shrink-0 mt-0.5" />
             <p className="text-xs text-blue-700">
-              File ini akan dikirim ke Staff RnI tanpa e-sign dari Anda. Posisi QR stamp Level 0
-              akan ditentukan oleh Staff RnI saat mereka melakukan approval.
+              This document file will be forwarded to Staff Regulatory for approval.
             </p>
           </div>
         )}
@@ -266,6 +323,13 @@ export default function DocumentUploadPage() {
               defaults={qrDefaults}
               limits={qrLimits}
               onChange={setPosition}
+              footerBox={footerDefaults ? {
+                enabled:      true,
+                draggable:    true,
+                defaults:     footerDefaults,
+                onChange:     setFooterPosition,
+                previewLines: footerPreviewLines,
+              } : undefined}
             />
 
             {position ? (
@@ -322,6 +386,32 @@ export default function DocumentUploadPage() {
               ))}
             </select>
           </div>
+
+          {isUploaderRole && (
+            <div>
+              <label className="label">
+                Route to (Staff Regulatory)
+                {form.productCategoryId && <span className="text-red-500 ml-1">*</span>}
+              </label>
+              <select
+                className="input"
+                value={targetApproverId}
+                onChange={e => { setTargetApproverId(e.target.value); setManuallyChanged(true); }}
+              >
+                <option value="">— Select Staff Regulatory —</option>
+                {(candidatesData || []).map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.name} ({u.role}){u.id === suggestedApprover?.approver?.id ? ' — Suggested' : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                {suggestedApprover?.approver
+                  ? `Suggested based on ${suggestedApprover.source === 'category' ? 'product-specific' : suggestedApprover.source === 'group' ? 'product group' : 'fallback'} mapping — pilih user lain kalau perlu.`
+                  : 'Pilih Product Category dulu untuk melihat suggestion, atau pilih manual.'}
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div>

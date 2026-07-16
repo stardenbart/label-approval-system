@@ -17,9 +17,9 @@ const ROLE_COLOR = {
 
 // Mapping levels: keep in one place so the form, the grid, and copy stay in sync.
 const MAPPING_LEVELS = [
-  { level: 0, label: 'Level 0 — Staff RnI',       shortLabel: 'Staff RnI',       description: 'Initial reviewer for documents uploaded via the Uploader role', tone: 'amber' },
-  { level: 1, label: 'Level 1 — SPV RnI',          shortLabel: 'SPV RnI',          description: 'First document recipient',                                    tone: 'blue' },
-  { level: 2, label: 'Level 2 — Marketing Team',   shortLabel: 'Marketing Team',   description: 'Final approver',                                               tone: 'green' },
+  { level: 0, label: 'Level 0 — Staff Regulatory',       shortLabel: 'Staff Regulatory',       description: 'Initial reviewer for documents uploaded via the Uploader role', tone: 'amber' },
+  { level: 1, label: 'Level 1 — SPV Regulatory',          shortLabel: 'SPV Regulatory',          description: 'First document recipient',                                    tone: 'blue' },
+  { level: 2, label: 'Level 2 — Manager Regulatory',   shortLabel: 'Manager Regulatory',   description: 'Final approver',                                               tone: 'green' },
 ];
 
 const LEVEL_TONE_CLASSES = {
@@ -88,7 +88,7 @@ function UserModal({ user, onClose, onSaved }) {
             </select>
             {form.role === 'uploader' && (
               <p className="text-xs text-amber-500 mt-1">
-                Uploader submits documents without e-sign; they route to whoever is mapped as Level 0 (Staff RnI) below.
+                Uploader submits documents without e-sign; they route to whoever is mapped as Level 0 (Staff Regulatory) below.
               </p>
             )}
           </div>
@@ -119,15 +119,21 @@ function UserModal({ user, onClose, onSaved }) {
 // ─── Product-Approver Mapping Tab ─────────────────────────────────
 function MappingTab() {
   const queryClient = useQueryClient();
-  const [form, setForm]     = useState({ productGroupId: '', approverUserId: '', level: '1' });
+  const [form, setForm]     = useState({ productGroupId: '', productCategoryId: '', approverUserId: '', level: '1', scope: 'group' });
   const [loading, setLoading] = useState(false);
 
   const { data: mappings, isLoading: loadingMappings } = useQuery({
     queryKey: ['mappings'],
     queryFn:  () => api.get('/users/mappings/all').then(r => r.data.data),
   });
-  const { data: groups }  = useQuery({ queryKey: ['groups'],  queryFn: () => api.get('/products/groups').then(r => r.data.data) });
-  const { data: users }   = useQuery({ queryKey: ['users'],   queryFn: () => api.get('/users').then(r => r.data.data) });
+  const { data: groups }     = useQuery({ queryKey: ['groups'],  queryFn: () => api.get('/products/groups').then(r => r.data.data) });
+  const { data: users }      = useQuery({ queryKey: ['users'],   queryFn: () => api.get('/users').then(r => r.data.data) });
+  const { data: categories } = useQuery({ queryKey: ['product-categories'], queryFn: () => api.get('/products/categories').then(r => r.data.data) });
+
+  const isLevel0 = form.level === '0';
+  const categoriesInGroup = (categories || []).filter(
+    c => c.isActive && (c.groupId === parseInt(form.productGroupId) || c.group?.id === parseInt(form.productGroupId))
+  );
 
   // NOTE: intentionally excludes 'uploader' — uploaders submit documents, they
   // are never valid targets for a mapping at any level (0, 1, or 2). This list
@@ -139,34 +145,40 @@ function MappingTab() {
   async function handleAdd(e) {
     e.preventDefault();
     if (!form.productGroupId || !form.approverUserId) {
-      toast.error('Pilih grup produk dan approver');
+      toast.error('Select group product and approver');
+      return;
+    }
+    const useCategory = isLevel0 && form.scope === 'category';
+    if (useCategory && !form.productCategoryId) {
+      toast.error('Select the specific product for this override');
       return;
     }
     setLoading(true);
     try {
       await api.post('/users/mappings', {
-        productGroupId: parseInt(form.productGroupId),
-        approverUserId: form.approverUserId,
-        level:          parseInt(form.level),
+        productGroupId:    parseInt(form.productGroupId),
+        productCategoryId: useCategory ? parseInt(form.productCategoryId) : null,
+        approverUserId:    form.approverUserId,
+        level:             parseInt(form.level),
       });
-      toast.success(`Mapping Level ${form.level} berhasil disimpan`);
+      toast.success(`Mapping Level ${form.level} saved`);
       queryClient.invalidateQueries({ queryKey: ['mappings'] });
-      setForm(f => ({ ...f, approverUserId: '' }));
+      setForm(f => ({ ...f, approverUserId: '', productCategoryId: '' }));
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Gagal menyimpan mapping');
+      toast.error(err.response?.data?.message || 'Failed to save mapping');
     } finally {
       setLoading(false);
     }
   }
 
   async function handleDelete(id) {
-    if (!confirm('Hapus mapping ini?')) return;
+    if (!confirm('Delete this mapping?')) return;
     try {
       await api.delete(`/users/mappings/${id}`);
-      toast.success('Mapping dihapus');
+      toast.success('Mapping deleted');
       queryClient.invalidateQueries({ queryKey: ['mappings'] });
     } catch (_) {
-      toast.error('Gagal menghapus mapping');
+      toast.error('Failed to delete mapping');
     }
   }
 
@@ -188,7 +200,7 @@ function MappingTab() {
           <div>
             <label className="label">Product Group</label>
             <select className="input" value={form.productGroupId}
-              onChange={e => setForm(f => ({ ...f, productGroupId: e.target.value }))} required>
+              onChange={e => setForm(f => ({ ...f, productGroupId: e.target.value, productCategoryId: '' }))} required>
               <option value="">— Select Group —</option>
               {(groups || []).filter(g => g.isActive).map(g => (
                 <option key={g.id} value={g.id}>{g.name}</option>
@@ -198,7 +210,7 @@ function MappingTab() {
           <div>
             <label className="label">Level</label>
             <select className="input" value={form.level}
-              onChange={e => setForm(f => ({ ...f, level: e.target.value }))}>
+              onChange={e => setForm(f => ({ ...f, level: e.target.value, scope: 'group', productCategoryId: '' }))}>
               {MAPPING_LEVELS.map(({ level, label }) => (
                 <option key={level} value={String(level)}>{label}</option>
               ))}
@@ -218,9 +230,44 @@ function MappingTab() {
             {loading ? <Loader2 size={15} className="animate-spin" /> : <Link2 size={15} />}
             Save
           </button>
+
+          {isLevel0 && (
+            <div className="sm:col-span-4 flex items-center gap-4 -mt-1">
+              <label className="flex items-center gap-1.5 text-sm text-gray-600">
+                <input type="radio" name="mapping-scope" checked={form.scope === 'group'}
+                  onChange={() => setForm(f => ({ ...f, scope: 'group', productCategoryId: '' }))} />
+                Whole Group
+              </label>
+              <label className="flex items-center gap-1.5 text-sm text-gray-600">
+                <input type="radio" name="mapping-scope" checked={form.scope === 'category'}
+                  onChange={() => setForm(f => ({ ...f, scope: 'category' }))} />
+                Specific Product
+              </label>
+            </div>
+          )}
+
+          {isLevel0 && form.scope === 'category' && (
+            <div className="sm:col-span-4">
+              <label className="label">Specific Product</label>
+              <select className="input" value={form.productCategoryId}
+                onChange={e => setForm(f => ({ ...f, productCategoryId: e.target.value }))} required
+                disabled={!form.productGroupId}>
+                <option value="">— Select Product —</option>
+                {categoriesInGroup.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}{c.subGroup ? ` (${c.subGroup})` : ''} — {c.productCode}
+                  </option>
+                ))}
+              </select>
+              {!form.productGroupId && (
+                <p className="text-xs text-amber-500 mt-1">Select a Product Group first</p>
+              )}
+            </div>
+          )}
         </form>
         <p className="text-xs text-gray-400 mt-2">
-          If a mapping for the same group + level already exists, it will be automatically replaced (upsert).
+          If a mapping for the same group/product + level already exists, it will be automatically replaced (upsert).
+          Product-specific override is only available at Level 0 (Staff Regulatory) — a product without its own override falls back to the group's default.
         </p>
       </div>
 
@@ -244,25 +291,45 @@ function MappingTab() {
                     <p className="text-sm text-amber-600 font-medium">There is no Level {level} mapping yet</p>
                     <p className="text-xs text-gray-400 mt-1">
                       {level === 0
-                        ? 'Uploads via the Uploader role will fall back to any active Superadmin as Staff RnI — not necessarily who you intend.'
+                        ? 'Uploads via the Uploader role will fall back to any active Superadmin as Staff Regulatory — not necessarily who you intend.'
                         : level === 1
                           ? 'Uploads will fall back to any active Superadmin/Admin as SPV — not necessarily who you intend.'
-                          : 'SPV can select the Marketing approver manually during their approval.'}
+                          : 'SPV can select the Manager Regulatory approver manually during their approval.'}
                     </p>
                   </div>
                 ) : (
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50 border-b">
                       <tr>
-                        <th className="px-4 py-2 text-left text-xs text-gray-500">Product Group</th>
+                        <th className="px-4 py-2 text-left text-xs text-gray-500">
+                          {level === 0 ? 'Product Group / Specific Product' : 'Product Group'}
+                        </th>
                         <th className="px-4 py-2 text-left text-xs text-gray-500">Approver</th>
                         <th className="px-4 py-2"></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50">
-                      {rows.map(m => (
+                      {rows
+                        .slice()
+                        .sort((a, b) => (a.productCategory ? 1 : 0) - (b.productCategory ? 1 : 0))
+                        .map(m => (
                         <tr key={m.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-2.5 font-medium text-gray-800">{m.productGroup?.name}</td>
+                          <td className="px-4 py-2.5 font-medium text-gray-800">
+                            {m.productCategory ? (
+                              <>
+                                <span className="text-xs bg-brand-50 text-brand-600 border border-brand-200 px-1.5 py-0.5 rounded-full mr-1.5">Product</span>
+                                {m.productCategory.name} ({m.productCategory.productCode})
+                                <span className="block text-xs font-normal text-gray-400">{m.productGroup?.name}</span>
+                              </>
+                            ) : (
+                              <>
+                                {level === 0 && (
+                                  <span className="text-xs bg-gray-100 text-gray-500 border border-gray-200 px-1.5 py-0.5 rounded-full mr-1.5">Group default</span>
+                                )}
+                                {m.productGroup?.name}
+                              </>
+                            )}
+                          </td>
                           <td className="px-4 py-2.5">
                             <p className="text-sm text-gray-900">{m.approver?.name}</p>
                             <p className="text-xs text-gray-400">{m.approver?.email}</p>
@@ -305,17 +372,17 @@ export default function UserManagementPage() {
 
   async function toggleActive(user) {
     if (user.id === currentUser?.id) {
-      toast.error('Tidak dapat menonaktifkan akun sendiri');
+      toast.error('Cannot deactivate own account');
       return;
     }
-    const action = user.isActive ? 'Nonaktifkan' : 'Aktifkan';
+    const action = user.isActive ? 'Deactive' : 'Activate';
     if (!confirm(`${action} user ${user.name}?`)) return;
     try {
       await api.patch(`/users/${user.id}`, { isActive: !user.isActive });
-      toast.success(`User berhasil di-${action.toLowerCase()}`);
+      toast.success(`User successfullet ${action.toLowerCase()}`);
       refresh();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Gagal');
+      toast.error(err.response?.data?.message || 'failed');
     }
   }
 

@@ -21,6 +21,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  *   defaults  — { xPercent, yPercent, widthPt, heightPt, pageNumber }
  *   limits    — { minWidthPt, maxWidthPt }
  *   onChange  — (position) => void  { pageNumber, xPercent, yPercent, widthPt, heightPt }
+ *   footerBox — optional second draggable box for the combined "ID Regulatory /
+ *               Nama Label / Nama File" stamp. Shape:
+ *               { enabled, draggable, defaults: {xPercent,yPercent,widthPt,heightPt,pageNumber},
+ *                 onChange, previewLines: string[] }
+ *               Omitted or `enabled: false` → zero behavior change (QR box only,
+ *               exactly as before this prop existed).
  *
  * Fix log:
  *   FIX-01 — Load PDF via api (axios interceptor attach Bearer token) for /api/ paths.
@@ -32,11 +38,12 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  *   FIX-04 — pdfReady state as explicit render trigger after PDF load.
  *            Avoids blank canvas when setPageNum(1) → pageNum already 1 → no re-render.
  */
-export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onChange }) {
+export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onChange, footerBox }) {
   const canvasRef    = useRef(null);
   const containerRef = useRef(null);
   const pdfRef       = useRef(null);
   const nodeRef      = useRef(null);
+  const footerNodeRef = useRef(null);
 
   const [numPages,   setNumPages]   = useState(0);
   const [pageNum,    setPageNum]    = useState(defaults?.pageNumber || 1);
@@ -57,6 +64,19 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   const [isDragging, setIsDragging] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(true);
   const [pdfError,   setPdfError]   = useState(false);
+
+  // ── Footer box (additive, parallel state — does not touch the QR box above) ──
+  const footerEnabled = !!footerBox?.enabled;
+  const [footerPosPercent, setFooterPosPercent] = useState({
+    x: footerBox?.defaults?.xPercent ?? 3,
+    y: footerBox?.defaults?.yPercent ?? 97,
+  });
+  const [footerPos,  setFooterPos]  = useState({ x: 0, y: 0 });
+  const [footerSize, setFooterSize] = useState({
+    w: footerBox?.defaults?.widthPt  || 220,
+    h: footerBox?.defaults?.heightPt || 30,
+  });
+  const [footerDragging, setFooterDragging] = useState(false);
 
   // ---------------------------------------------------------------------------
   // FIX-01 + FIX-02: Load PDF
@@ -152,6 +172,15 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     });
   }, [canvasSize, stampPosPercent]);
 
+  // Footer box: same recalculation pattern as the QR box, kept independent.
+  useEffect(() => {
+    if (!footerEnabled || !canvasSize.w || !canvasSize.h) return;
+    setFooterPos({
+      x: (footerPosPercent.x / 100) * canvasSize.w,
+      y: (footerPosPercent.y / 100) * canvasSize.h,
+    });
+  }, [canvasSize, footerPosPercent, footerEnabled]);
+
   // ---------------------------------------------------------------------------
   // Emit position to parent
   // ---------------------------------------------------------------------------
@@ -179,6 +208,32 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     setStampPosPercent({ x: (newX / canvasSize.w) * 100, y: (newY / canvasSize.h) * 100 });
     setIsDragging(false);
     emitPosition(newX, newY, stampSize.w, stampSize.h);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Footer box drag (additive — mirrors the QR box's emitPosition/handleDragStop)
+  // ---------------------------------------------------------------------------
+  const emitFooterPosition = useCallback(
+    (posX, posY, fw, fh) => {
+      if (!canvasSize.w || !canvasSize.h) return;
+      footerBox?.onChange?.({
+        pageNumber: pageNum,
+        xPercent:   Math.max(0, Math.min(100, (posX / canvasSize.w) * 100)),
+        yPercent:   Math.max(0, Math.min(100, (posY / canvasSize.h) * 100)),
+        widthPt:    fw,
+        heightPt:   fh,
+      });
+    },
+    [canvasSize, pageNum, footerBox]
+  );
+
+  function handleFooterDragStop(_e, data) {
+    const newX = Math.max(0, Math.min(data.x, canvasSize.w - footerSize.w));
+    const newY = Math.max(0, Math.min(data.y, canvasSize.h - footerSize.h));
+    setFooterPos({ x: newX, y: newY });
+    setFooterPosPercent({ x: (newX / canvasSize.w) * 100, y: (newY / canvasSize.h) * 100 });
+    setFooterDragging(false);
+    emitFooterPosition(newX, newY, footerSize.w, footerSize.h);
   }
 
   // ---------------------------------------------------------------------------
@@ -210,6 +265,13 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     top:    0,
     right:  Math.max(0, canvasSize.w - stampSize.w),
     bottom: Math.max(0, canvasSize.h - stampSize.h),
+  };
+
+  const footerBounds = {
+    left:   0,
+    top:    0,
+    right:  Math.max(0, canvasSize.w - footerSize.w),
+    bottom: Math.max(0, canvasSize.h - footerSize.h),
   };
 
   // ---------------------------------------------------------------------------
@@ -305,6 +367,30 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
                 </div>
               </Draggable>
             )}
+
+            {footerEnabled && !pdfLoading && pdfReady && canvasSize.w > 0 && (
+              <Draggable
+                nodeRef={footerNodeRef}
+                position={footerPos}
+                bounds={footerBounds}
+                disabled={!footerBox.draggable}
+                onStart={() => setFooterDragging(true)}
+                onStop={handleFooterDragStop}
+              >
+                <div
+                  ref={footerNodeRef}
+                  className={`absolute select-none transition-opacity ${footerBox.draggable ? 'cursor-move' : 'cursor-not-allowed'} ${footerDragging ? 'opacity-70' : 'opacity-90'}`}
+                  style={{ width: footerSize.w, height: footerSize.h, top: 0, left: 0 }}
+                  title={footerBox.draggable ? 'Drag untuk pindahkan posisi stamp footer' : 'Posisi stamp footer terkunci (diset di Level 0)'}
+                >
+                  <div className="w-full h-full bg-white/85 border-2 border-dashed border-amber-500 rounded px-1.5 py-1 overflow-hidden flex flex-col justify-center gap-0.5">
+                    {(footerBox.previewLines || []).slice(0, 3).map((line, i) => (
+                      <p key={i} className="text-[6px] leading-tight text-gray-500 truncate">{line}</p>
+                    ))}
+                  </div>
+                </div>
+              </Draggable>
+            )}
           </div>
         )}
       </div>
@@ -312,6 +398,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
       <p className="text-xs text-gray-400 flex items-center gap-1">
         <Move size={11} />
         Drag QR box to specified sign area. Use QR +/− to adjust the stamp size.
+        {footerEnabled && footerBox.draggable && ' Drag the dashed amber box to position the ID/Label/File stamp.'}
       </p>
     </div>
   );
