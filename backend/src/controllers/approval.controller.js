@@ -37,6 +37,8 @@ const footerPositionSchema = Joi.object({
   yPercent:   Joi.number().min(0).max(100).required(),
   widthPt:    Joi.number().min(50).max(400).required(),
   heightPt:   Joi.number().min(15).max(100).required(),
+  fontSize:   Joi.number().min(5).max(24).default(7),
+  rotation:   Joi.number().valid(0, 90, 180, 270).default(0),
 });
 
 // ─── Helper: determine if an approval is at the final level ──────────────────
@@ -160,6 +162,8 @@ exports.approve = async (req, res, next) => {
             yPercent:   footerPosition?.yPercent   ?? footerSettings.footerDefaultYPercent,
             widthPt:    footerPosition?.widthPt    ?? footerSettings.footerDefaultWidthPt,
             heightPt:   footerPosition?.heightPt   ?? footerSettings.footerDefaultHeightPt,
+            fontSize:   footerPosition?.fontSize   ?? footerSettings.footerDefaultFontSize,
+            rotation:   footerPosition?.rotation   ?? footerSettings.footerDefaultRotation,
           };
           await tx.documentFooterPosition.upsert({
             where:  { documentId: approval.documentId },
@@ -343,6 +347,8 @@ exports.suggestedApprovers = async (req, res, next) => {
               yPercent:   Number(approval.document.footerPosition.yPercent),
               widthPt:    Number(approval.document.footerPosition.widthPt),
               heightPt:   Number(approval.document.footerPosition.heightPt),
+              fontSize:   Number(approval.document.footerPosition.fontSize),
+              rotation:   Number(approval.document.footerPosition.rotation),
             }
           : null,
         suggested,

@@ -1,5 +1,5 @@
 // frontend/src/pages/DocumentUploadPage.jsx
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate, Link }       from 'react-router-dom';
 import { useQuery }                from '@tanstack/react-query';
 import { Upload, FileText, X, Loader2, AlertTriangle, AlertCircle, PenTool, Info } from 'lucide-react';
@@ -127,6 +127,8 @@ export default function DocumentUploadPage() {
     widthPt:    parseFloat(settings.footer_default_width_pt  || 220),
     heightPt:   parseFloat(settings.footer_default_height_pt || 30),
     pageNumber: parseInt(settings.footer_default_page        || 1),
+    fontSize:   parseFloat(settings.footer_default_font_size || 7),
+    rotation:   parseInt(settings.footer_default_rotation    || 0),
   } : null;
 
   const selectedFileLabel = file?.name || '(file belum dipilih)';
@@ -212,7 +214,15 @@ export default function DocumentUploadPage() {
     }
   }
 
-  const localPdfUrl = file ? URL.createObjectURL(file) : null;
+  // Memoized so dragging the QR/footer stamp box (which updates position/footerPosition
+  // state and re-renders this component) does NOT mint a new blob URL every time —
+  // otherwise ESignCanvas's pdfUrl effect sees a "changed" URL and reloads the whole
+  // PDF from scratch on every drag, causing a visible flicker/reload each time.
+  const localPdfUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+
+  useEffect(() => {
+    return () => { if (localPdfUrl) URL.revokeObjectURL(localPdfUrl); };
+  }, [localPdfUrl]);
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">

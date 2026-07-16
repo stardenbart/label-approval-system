@@ -27,7 +27,7 @@
  *   document.qrPathEsign is no longer read here.
  */
 
-const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const { PDFDocument, StandardFonts, rgb, degrees } = require('pdf-lib');
 const path   = require('path');
 const fs     = require('fs');
 const { prisma } = require('../config/prisma');
@@ -58,8 +58,23 @@ function truncate(str, max) {
 }
 
 /**
- * @param {Object} footerPos - { pageNumber, xPercent, yPercent, widthPt, heightPt }
- *                             (already resolved/validated by the caller)
+ * Rotate a local (x,y) offset by angleDeg around the origin. Used to keep the
+ * 3-line footer block rigid as one unit when rotated, instead of each line
+ * spinning independently around its own anchor (see drawFooter below).
+ */
+function rotatePoint(x, y, angleDeg) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return {
+    x: x * Math.cos(rad) - y * Math.sin(rad),
+    y: x * Math.sin(rad) + y * Math.cos(rad),
+  };
+}
+
+/**
+ * @param {Object} footerPos - { pageNumber, xPercent, yPercent, widthPt, heightPt,
+ *                                fontSize, rotation } (already resolved/validated by the caller)
+ *                              rotation is one of 0 (Horizontal) / 90 (Vertical) /
+ *                              180 (Flip Horizontal) / 270 (Flip Vertical).
  */
 async function drawFooter(pdfDoc, document, footerPos) {
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -68,6 +83,10 @@ async function drawFooter(pdfDoc, document, footerPos) {
     `Nama Label: ${truncate(document.labelName, 90)}`,
     `Nama File: ${truncate(document.fileNameOriginal, 90)}`,
   ];
+
+  const fontSize = footerPos?.fontSize || FOOTER_FONT_SIZE;
+  const rotation = footerPos?.rotation || 0;
+  const lineGap  = fontSize + 2;
 
   for (const page of pdfDoc.getPages()) {
     const { width, height } = page.getSize();
@@ -81,13 +100,20 @@ async function drawFooter(pdfDoc, document, footerPos) {
     const maxWidth = footerPos ? footerPos.widthPt : width - FOOTER_MARGIN_PT * 2;
 
     lines.forEach((line, i) => {
+      // Local offset (unrotated) from the block's pivot point, same stacking
+      // order as before; rotated around the pivot so all 3 lines move as one
+      // rigid block instead of spinning individually around their own anchor.
+      const localOffsetY = (lines.length - 1 - i) * lineGap;
+      const { x: dx, y: dy } = rotatePoint(0, localOffsetY, rotation);
+
       page.drawText(line, {
-        x: xPt,
-        y: yPt + (lines.length - 1 - i) * FOOTER_LINE_GAP,
-        size: FOOTER_FONT_SIZE,
+        x: xPt + dx,
+        y: yPt + dy,
+        size: fontSize,
         font,
         color: FOOTER_COLOR,
         maxWidth,
+        rotate: degrees(rotation),
       });
     });
   }
@@ -115,6 +141,8 @@ async function getSettings() {
     footerDefaultWidthPt:  map.footer_default_width_pt   || 220,
     footerDefaultHeightPt: map.footer_default_height_pt  || 30,
     footerDefaultPage:     map.footer_default_page       || 1,
+    footerDefaultFontSize: map.footer_default_font_size  || 7,
+    footerDefaultRotation: [0, 90, 180, 270].includes(map.footer_default_rotation) ? map.footer_default_rotation : 0,
   };
 }
 
@@ -137,7 +165,9 @@ function validateFooterPosition(pos) {
   const yPercent = Math.max(0, Math.min(100, pos.yPercent));
   const widthPt  = Math.max(50, Math.min(400, pos.widthPt));
   const heightPt = Math.max(15, Math.min(100, pos.heightPt));
-  return { pageNumber: pos.pageNumber || 1, xPercent, yPercent, widthPt, heightPt };
+  const fontSize = Math.max(5, Math.min(24, pos.fontSize || FOOTER_FONT_SIZE));
+  const rotation = [0, 90, 180, 270].includes(pos.rotation) ? pos.rotation : 0;
+  return { pageNumber: pos.pageNumber || 1, xPercent, yPercent, widthPt, heightPt, fontSize, rotation };
 }
 
 /**
@@ -262,6 +292,8 @@ async function overlayEsign(document, approval, position, isFinalLevel = false, 
           yPercent:   settings.footerDefaultYPercent,
           widthPt:    settings.footerDefaultWidthPt,
           heightPt:   settings.footerDefaultHeightPt,
+          fontSize:   settings.footerDefaultFontSize,
+          rotation:   settings.footerDefaultRotation,
         };
     await drawFooter(pdfDoc, document, resolvedFooterPos);
   }

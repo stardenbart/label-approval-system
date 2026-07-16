@@ -103,6 +103,8 @@ export default function ApprovalPage() {
     widthPt:    parseFloat(settings.footer_default_width_pt  || 220),
     heightPt:   parseFloat(settings.footer_default_height_pt || 30),
     pageNumber: parseInt(settings.footer_default_page        || 1),
+    fontSize:   parseFloat(settings.footer_default_font_size || 7),
+    rotation:   parseInt(settings.footer_default_rotation    || 0),
   } : null);
 
   const footerPreviewLines = document ? [

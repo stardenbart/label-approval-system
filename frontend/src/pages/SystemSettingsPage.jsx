@@ -51,6 +51,8 @@ export default function SystemSettingsPage() {
         footer_default_width_pt:  parseFloat(form.footer_default_width_pt),
         footer_default_height_pt: parseFloat(form.footer_default_height_pt),
         footer_default_page:      parseInt(form.footer_default_page),
+        footer_default_font_size: parseFloat(form.footer_default_font_size),
+        footer_default_rotation:  parseInt(form.footer_default_rotation),
       });
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       toast.success('Settings berhasil disimpan');
@@ -127,6 +129,20 @@ export default function SystemSettingsPage() {
                   {field('footer_default_page',      'Default Page',     1, 99)}
                   {field('footer_default_x_percent', 'X Default (%)', 0, 100, 0.5)}
                   {field('footer_default_y_percent', 'Y Default (%)', 0, 100, 0.5)}
+                  {field('footer_default_font_size', 'Font Size (pt)', 5, 24, 0.5)}
+                  <div>
+                    <label className="label">Orientation</label>
+                    <select
+                      className="input"
+                      value={form.footer_default_rotation ?? '0'}
+                      onChange={e => setForm(f => ({ ...f, footer_default_rotation: e.target.value }))}
+                    >
+                      <option value="0">Horizontal</option>
+                      <option value="90">Vertical</option>
+                      <option value="180">Flip Horizontal</option>
+                      <option value="270">Flip Vertical</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 

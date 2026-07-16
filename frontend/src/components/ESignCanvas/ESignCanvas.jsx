@@ -23,10 +23,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  *   onChange  — (position) => void  { pageNumber, xPercent, yPercent, widthPt, heightPt }
  *   footerBox — optional second draggable box for the combined "ID Regulatory /
  *               Nama Label / Nama File" stamp. Shape:
- *               { enabled, draggable, defaults: {xPercent,yPercent,widthPt,heightPt,pageNumber},
+ *               { enabled, draggable,
+ *                 defaults: {xPercent,yPercent,widthPt,heightPt,pageNumber,fontSize,rotation},
  *                 onChange, previewLines: string[] }
- *               Omitted or `enabled: false` → zero behavior change (QR box only,
- *               exactly as before this prop existed).
+ *               `rotation` is one of 0 (Horizontal) / 90 (Vertical) / 180 (Flip
+ *               Horizontal) / 270 (Flip Vertical) — matches the PDF-side rotation
+ *               in pdf.service.js#drawFooter. Omitted or `enabled: false` → zero
+ *               behavior change (QR box only, exactly as before this prop existed).
  *
  * Fix log:
  *   FIX-01 — Load PDF via api (axios interceptor attach Bearer token) for /api/ paths.
@@ -77,6 +80,15 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     h: footerBox?.defaults?.heightPt || 30,
   });
   const [footerDragging, setFooterDragging] = useState(false);
+  const [footerFontSize, setFooterFontSize] = useState(footerBox?.defaults?.fontSize ?? 7);
+  const [footerRotation, setFooterRotation] = useState(footerBox?.defaults?.rotation ?? 0);
+
+  const FOOTER_ROTATIONS = [
+    { value: 0,   label: 'Horizontal' },
+    { value: 90,  label: 'Vertical' },
+    { value: 180, label: 'Flip Horizontal' },
+    { value: 270, label: 'Flip Vertical' },
+  ];
 
   // ---------------------------------------------------------------------------
   // FIX-01 + FIX-02: Load PDF
@@ -214,7 +226,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   // Footer box drag (additive — mirrors the QR box's emitPosition/handleDragStop)
   // ---------------------------------------------------------------------------
   const emitFooterPosition = useCallback(
-    (posX, posY, fw, fh) => {
+    (posX, posY, fw, fh, fontSize, rotation) => {
       if (!canvasSize.w || !canvasSize.h) return;
       footerBox?.onChange?.({
         pageNumber: pageNum,
@@ -222,6 +234,8 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
         yPercent:   Math.max(0, Math.min(100, (posY / canvasSize.h) * 100)),
         widthPt:    fw,
         heightPt:   fh,
+        fontSize,
+        rotation,
       });
     },
     [canvasSize, pageNum, footerBox]
@@ -233,7 +247,21 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     setFooterPos({ x: newX, y: newY });
     setFooterPosPercent({ x: (newX / canvasSize.w) * 100, y: (newY / canvasSize.h) * 100 });
     setFooterDragging(false);
-    emitFooterPosition(newX, newY, footerSize.w, footerSize.h);
+    emitFooterPosition(newX, newY, footerSize.w, footerSize.h, footerFontSize, footerRotation);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Footer font size + orientation controls (additive, mirrors QR's handleResize)
+  // ---------------------------------------------------------------------------
+  function handleFooterFontResize(delta) {
+    const newSize = Math.max(5, Math.min(24, footerFontSize + delta));
+    setFooterFontSize(newSize);
+    emitFooterPosition(footerPos.x, footerPos.y, footerSize.w, footerSize.h, newSize, footerRotation);
+  }
+
+  function handleFooterRotationChange(newRotation) {
+    setFooterRotation(newRotation);
+    emitFooterPosition(footerPos.x, footerPos.y, footerSize.w, footerSize.h, footerFontSize, newRotation);
   }
 
   // ---------------------------------------------------------------------------
@@ -312,6 +340,33 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
         </button>
       </div>
 
+      {/* Footer stamp controls (additive — only shown when the footer box is draggable) */}
+      {footerEnabled && footerBox.draggable && (
+        <div className="flex items-center gap-2 flex-wrap bg-amber-50 rounded-lg p-2 border border-amber-200">
+          <span className="text-xs font-medium text-amber-700 mr-1">Stamp Footer:</span>
+
+          <button onClick={() => handleFooterFontResize(-1)} className="btn-secondary py-1 px-2 text-xs">Font −</button>
+          <span className="text-xs text-gray-500 min-w-[40px] text-center">{Math.round(footerFontSize)}pt</span>
+          <button onClick={() => handleFooterFontResize(+1)} className="btn-secondary py-1 px-2 text-xs">Font +</button>
+
+          <div className="w-px h-5 bg-amber-200 mx-1" />
+
+          {FOOTER_ROTATIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              onClick={() => handleFooterRotationChange(value)}
+              className={`py-1 px-2 text-xs rounded-md border transition-colors ${
+                footerRotation === value
+                  ? 'bg-amber-500 border-amber-500 text-white'
+                  : 'bg-white border-gray-300 text-gray-600 hover:border-amber-300'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Canvas area */}
       <div
         ref={containerRef}
@@ -383,9 +438,19 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
                   style={{ width: footerSize.w, height: footerSize.h, top: 0, left: 0 }}
                   title={footerBox.draggable ? 'Drag untuk pindahkan posisi stamp footer' : 'Posisi stamp footer terkunci (diset di Level 0)'}
                 >
-                  <div className="w-full h-full bg-white/85 border-2 border-dashed border-amber-500 rounded px-1.5 py-1 overflow-hidden flex flex-col justify-center gap-0.5">
+                  <div
+                    className="w-full h-full bg-white/85 border-2 border-dashed border-amber-500 rounded px-1.5 py-1 overflow-hidden flex flex-col justify-center gap-0.5"
+                    style={{ transform: `rotate(${-footerRotation}deg)` }}
+                    title="Preview kasar — orientasi aktual di PDF ditentukan server-side"
+                  >
                     {(footerBox.previewLines || []).slice(0, 3).map((line, i) => (
-                      <p key={i} className="text-[6px] leading-tight text-gray-500 truncate">{line}</p>
+                      <p
+                        key={i}
+                        className="leading-tight text-gray-500 truncate"
+                        style={{ fontSize: `${Math.max(4, Math.min(14, footerFontSize))}px` }}
+                      >
+                        {line}
+                      </p>
                     ))}
                   </div>
                 </div>

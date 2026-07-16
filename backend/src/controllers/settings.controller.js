@@ -18,6 +18,8 @@ const DEFAULTS = {
   footer_default_width_pt:  '220',
   footer_default_height_pt: '30',
   footer_default_page:      '1',
+  footer_default_font_size: '7',
+  footer_default_rotation:  '0',
 };
 
 exports.getAll = async (req, res, next) => {
@@ -43,6 +45,8 @@ exports.update = async (req, res, next) => {
       footer_default_width_pt:  Joi.number().min(50).max(400),
       footer_default_height_pt: Joi.number().min(15).max(100),
       footer_default_page:      Joi.number().integer().min(1),
+      footer_default_font_size: Joi.number().min(5).max(24),
+      footer_default_rotation:  Joi.number().valid(0, 90, 180, 270),
     });
     const { error, value } = schema.validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });

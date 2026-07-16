@@ -193,6 +193,9 @@ model DocumentFooterPosition {
   yPercent   Decimal  @map("y_percent") @db.Decimal(6, 3)
   widthPt    Decimal  @map("width_pt") @db.Decimal(7, 2)
   heightPt   Decimal  @map("height_pt") @db.Decimal(7, 2)
+  fontSize   Decimal  @default(7) @map("font_size") @db.Decimal(4, 1)
+  // 0=Horizontal, 90=Vertical, 180=Flip Horizontal, 270=Flip Vertical
+  rotation   Int      @default(0) @map("rotation") @db.SmallInt
   createdAt  DateTime @default(now()) @map("created_at")
 
   document Document @relation(fields: [documentId], references: [id])

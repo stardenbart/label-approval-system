@@ -49,6 +49,8 @@ const footerPositionSchema = Joi.object({
   yPercent:   Joi.number().min(0).max(100).required(),
   widthPt:    Joi.number().min(50).max(400).required(),
   heightPt:   Joi.number().min(15).max(100).required(),
+  fontSize:   Joi.number().min(5).max(24).default(7),
+  rotation:   Joi.number().valid(0, 90, 180, 270).default(0),
 }).optional().allow(null);
 
 exports.list = async (req, res, next) => {
@@ -417,6 +419,8 @@ exports.upload = async (req, res, next) => {
                 yPercent:   footerPosition?.yPercent   ?? settings.footerDefaultYPercent,
                 widthPt:    footerPosition?.widthPt    ?? settings.footerDefaultWidthPt,
                 heightPt:   footerPosition?.heightPt   ?? settings.footerDefaultHeightPt,
+                fontSize:   footerPosition?.fontSize   ?? settings.footerDefaultFontSize,
+                rotation:   footerPosition?.rotation   ?? settings.footerDefaultRotation,
               },
             });
           });

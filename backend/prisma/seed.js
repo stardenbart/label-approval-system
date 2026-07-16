@@ -21,6 +21,8 @@ async function main() {
     { key: 'footer_default_width_pt',  value: '220', description: 'Lebar default stamp footer (PDF points)' },
     { key: 'footer_default_height_pt', value: '30',  description: 'Tinggi default stamp footer (PDF points)' },
     { key: 'footer_default_page',      value: '1',   description: 'Halaman default penempatan stamp footer' },
+    { key: 'footer_default_font_size', value: '7',   description: 'Ukuran font default stamp footer (pt)' },
+    { key: 'footer_default_rotation',  value: '0',   description: 'Orientasi default stamp footer (0=Horizontal, 90=Vertical, 180=Flip Horizontal, 270=Flip Vertical)' },
   ];
 
   for (const s of settings) {
