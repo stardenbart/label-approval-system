@@ -309,33 +309,33 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     <div className="flex flex-col gap-3">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap bg-gray-50 rounded-lg p-2 border border-gray-200">
-        <button disabled={pageNum <= 1} onClick={() => setPageNum(p => p - 1)} className="btn-secondary py-1 px-2">
+        <button type="button" disabled={pageNum <= 1} onClick={() => setPageNum(p => p - 1)} className="btn-secondary py-1 px-2">
           <ChevronLeft size={14} />
         </button>
         <span className="text-sm text-gray-600 min-w-[80px] text-center">
           Hal {pageNum} / {numPages || '—'}
         </span>
-        <button disabled={pageNum >= numPages} onClick={() => setPageNum(p => p + 1)} className="btn-secondary py-1 px-2">
+        <button type="button" disabled={pageNum >= numPages} onClick={() => setPageNum(p => p + 1)} className="btn-secondary py-1 px-2">
           <ChevronRight size={14} />
         </button>
 
         <div className="w-px h-5 bg-gray-300 mx-1" />
 
-        <button onClick={() => setScale(s => Math.max(0.5, +(s - 0.2).toFixed(1)))} className="btn-secondary py-1 px-2">
+        <button type="button" onClick={() => setScale(s => Math.max(0.5, +(s - 0.2).toFixed(1)))} className="btn-secondary py-1 px-2">
           <ZoomOut size={14} />
         </button>
         <span className="text-xs text-gray-500 min-w-[40px] text-center">{Math.round(scale * 100)}%</span>
-        <button onClick={() => setScale(s => Math.min(3, +(s + 0.2).toFixed(1)))} className="btn-secondary py-1 px-2">
+        <button type="button" onClick={() => setScale(s => Math.min(3, +(s + 0.2).toFixed(1)))} className="btn-secondary py-1 px-2">
           <ZoomIn size={14} />
         </button>
 
         <div className="w-px h-5 bg-gray-300 mx-1" />
 
-        <button onClick={() => handleResize(-10)} className="btn-secondary py-1 px-2 text-xs">QR −</button>
+        <button type="button" onClick={() => handleResize(-10)} className="btn-secondary py-1 px-2 text-xs">QR −</button>
         <span className="text-xs text-gray-500 min-w-[40px] text-center">{Math.round(stampSize.w)}pt</span>
-        <button onClick={() => handleResize(+10)} className="btn-secondary py-1 px-2 text-xs">QR +</button>
+        <button type="button" onClick={() => handleResize(+10)} className="btn-secondary py-1 px-2 text-xs">QR +</button>
 
-        <button onClick={resetToDefault} className="btn-secondary py-1 px-2 ml-auto text-xs">
+        <button type="button" onClick={resetToDefault} className="btn-secondary py-1 px-2 ml-auto text-xs">
           <RotateCcw size={12} /> Reset
         </button>
       </div>
@@ -345,15 +345,16 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
         <div className="flex items-center gap-2 flex-wrap bg-amber-50 rounded-lg p-2 border border-amber-200">
           <span className="text-xs font-medium text-amber-700 mr-1">Stamp Footer:</span>
 
-          <button onClick={() => handleFooterFontResize(-1)} className="btn-secondary py-1 px-2 text-xs">Font −</button>
+          <button type="button" onClick={() => handleFooterFontResize(-1)} className="btn-secondary py-1 px-2 text-xs">Font −</button>
           <span className="text-xs text-gray-500 min-w-[40px] text-center">{Math.round(footerFontSize)}pt</span>
-          <button onClick={() => handleFooterFontResize(+1)} className="btn-secondary py-1 px-2 text-xs">Font +</button>
+          <button type="button" onClick={() => handleFooterFontResize(+1)} className="btn-secondary py-1 px-2 text-xs">Font +</button>
 
           <div className="w-px h-5 bg-amber-200 mx-1" />
 
           {FOOTER_ROTATIONS.map(({ value, label }) => (
             <button
               key={value}
+              type="button"
               onClick={() => handleFooterRotationChange(value)}
               className={`py-1 px-2 text-xs rounded-md border transition-colors ${
                 footerRotation === value
