@@ -9,4 +9,11 @@
 -- backend/prisma/seed.js). Category-specific rows remain safely covered by
 -- uq_category_level (product_category_id, level) — that index is unaffected,
 -- since product_category_id is never null in that branch.
+--
+-- NOTE: InnoDB was using this composite index's leftmost column (product_group_id)
+-- to satisfy the `product_approver_mappings_product_group_id_fkey` foreign key
+-- constraint. A plain index must exist on product_group_id BEFORE dropping the
+-- old unique index, or MySQL refuses with error 1553.
+CREATE INDEX `product_approver_mappings_product_group_id_idx` ON `product_approver_mappings`(`product_group_id`);
+
 ALTER TABLE `product_approver_mappings` DROP INDEX `product_approver_mappings_product_group_id_level_key`;
