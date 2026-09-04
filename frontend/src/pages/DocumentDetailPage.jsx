@@ -251,11 +251,8 @@ export default function DocumentDetailPage() {
         <div className="space-y-4">
           <div className="card p-5">
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <QrCode size={16} /> QR Code E-Sign per Level
+              <QrCode size={16} /> QR Code E-Sign
             </h3>
-            <p className="text-xs text-gray-400 -mt-2 mb-3">
-              Satu QR per level untuk menelusuri konfirmasi masing-masing. Tidak dicetak di PDF.
-            </p>
             <div className="space-y-4">
               {/* QR per level: bukan yang dicetak, tapi jalur untuk menelusuri
                   konfirmasi tiap level satu per satu. Yang tercetak di PDF hanya
@@ -315,11 +312,8 @@ export default function DocumentDetailPage() {
 
           <div className="card p-5">
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <QrCode size={16} /> QR Code Dokumen
+              <QrCode size={16} /> QR Code Original
             </h3>
-            <p className="text-xs text-gray-400 -mt-2 mb-3">
-              Satu-satunya QR yang tercetak di PDF. Halaman yang dituju menampilkan seluruh rantai approval.
-            </p>
             <div className="flex flex-col items-center gap-3">
               <div className="w-36 h-36 bg-gray-100 rounded-lg flex items-center justify-center border">
                 {qrOriginalUrl

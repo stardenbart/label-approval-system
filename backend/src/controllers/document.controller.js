@@ -563,20 +563,71 @@ exports.remove = async (req, res, next) => {
     const doc = await prisma.document.findFirst({ where: { id: req.params.id, deletedAt: null } });
     if (!doc) return res.status(404).json({ success: false, message: 'Document not found' });
 
-    const pendingCount = await prisma.documentApproval.count({
-      where: { documentId: req.params.id, status: 'PENDING' },
+    const pending = await prisma.documentApproval.findMany({
+      where:  { documentId: req.params.id, status: 'PENDING' },
+      select: { id: true, level: true, approverId: true },
     });
-    if (pendingCount > 0) {
+
+    // Dokumen yang masih berjalan tidak boleh lenyap begitu saja — pekerjaan
+    // orang lain ada di dalamnya. Tapi penjaga ini dulu berlaku untuk SEMUA
+    // orang, termasuk superadmin, dan pesannya menyuruh "decline dulu" padahal
+    // hanya approver yang ditugaskan atau superadmin yang boleh men-decline.
+    // Untuk role admin itu jalan buntu: disuruh melakukan sesuatu yang ditolak
+    // sistem. Sekarang superadmin boleh menembusnya, admin tetap ditahan.
+    const isSuperadmin = req.user.role === 'superadmin';
+    if (pending.length > 0 && !isSuperadmin) {
       return res.status(400).json({
         success: false,
-        message: 'Cannot delete document with pending approvals. Decline first.',
+        message: 'Dokumen masih menunggu approval. Minta approver yang ditugaskan untuk decline, ' +
+                 'atau minta superadmin menghapusnya.',
         code:    'HAS_PENDING_APPROVALS',
       });
     }
 
-    await prisma.document.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } });
-    await auditService.log(req.user.id, 'DOCUMENT_DELETED', 'documents', req.params.id, req.ip);
-    res.json({ success: true, message: 'Document deleted' });
+    await prisma.$transaction(async (tx) => {
+      if (pending.length > 0) {
+        // Approval yang menggantung dibatalkan, bukan dibiarkan PENDING. Kalau
+        // dibiarkan, baris itu jadi pekerjaan hantu yang muncul lagi seandainya
+        // dokumennya dipulihkan. Enum tidak punya nilai CANCELLED, jadi dipakai
+        // DECLINED dengan catatan yang menyebut sebabnya.
+        await tx.documentApproval.updateMany({
+          where: { id: { in: pending.map(a => a.id) } },
+          data:  {
+            status:   'DECLINED',
+            signedAt: new Date(),
+            notes:    `Dibatalkan otomatis: dokumen dihapus oleh ${req.user.email}`,
+          },
+        });
+        await tx.document.update({
+          where: { id: req.params.id },
+          data:  { status: 'DECLINED' },
+        });
+      }
+      await tx.document.update({ where: { id: req.params.id }, data: { deletedAt: new Date() } });
+    });
+
+    // Approver yang antreannya berkurang berhak tahu kenapa.
+    for (const a of pending) {
+      await notifService.create({
+        userId:     a.approverId,
+        type:       'SYSTEM',
+        title:      'Dokumen Dibatalkan',
+        message:    `Dokumen "${doc.labelName}" (${doc.regulatoryId}) yang menunggu approval Anda di Level ${a.level} telah dihapus.`,
+        entityType: 'documents',
+        entityId:   req.params.id,
+      });
+    }
+
+    await auditService.log(req.user.id, 'DOCUMENT_DELETED', 'documents', req.params.id, req.ip, {
+      regulatoryId:      doc.regulatoryId,
+      cancelledApprovals: pending.map(a => ({ level: a.level, approverId: a.approverId })),
+    });
+    res.json({
+      success: true,
+      message: pending.length > 0
+        ? `Dokumen dihapus. ${pending.length} approval yang menunggu ikut dibatalkan.`
+        : 'Dokumen dihapus',
+    });
   } catch (err) { next(err); }
 };
 
