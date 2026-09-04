@@ -1,6 +1,6 @@
 // frontend/src/pages/AuditLogPage.jsx
-import React, { useState } from 'react';
-import { useQuery }  from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, keepPreviousData }  from '@tanstack/react-query';
 import { format }    from 'date-fns';
 import { ClipboardList, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import api from '../services/api';
@@ -17,7 +17,9 @@ export default function AuditLogPage() {
     queryFn:  () => api.get('/audit', {
       params: { page, limit: 30, action: action || undefined, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined },
     }).then(r => r.data.data),
-    keepPreviousData: true,
+    // v5: opsi `keepPreviousData: true` milik v4 diabaikan diam-diam,
+    // sehingga daftar berkedip kosong tiap ganti halaman.
+    placeholderData: keepPreviousData,
   });
 
   const items      = data?.items      || [];

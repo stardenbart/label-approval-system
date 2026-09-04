@@ -1,7 +1,7 @@
 // frontend/src/pages/DocumentListPage.jsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
   Search,
   Upload,
@@ -59,7 +59,9 @@ export default function DocumentListPage() {
         dateTo: dateTo || undefined,
       },
     }).then(r => r.data.data),
-    keepPreviousData: true,
+    // v5: opsi `keepPreviousData: true` milik v4 diabaikan diam-diam,
+    // sehingga daftar berkedip kosong tiap ganti halaman.
+    placeholderData: keepPreviousData,
     // Orang lain bisa approve/upload sementara daftar ini terbuka.
     refetchInterval: 60_000,
   });
