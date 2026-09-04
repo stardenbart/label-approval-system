@@ -5,11 +5,12 @@
 // FIX-05a — suggestedApprovers: isFinalLevel now uses mapping-based check (see resolveIsFinalLevel).
 // FIX-05b — approve(): isFinalLevel determined by absence of a mapping for level+1, not a
 //            hardcoded `>= 2` or fragile `_max.level || 2` fallback.
-// FIX-06  — QR-per-approval: each approval now generates its OWN QR (qrService.generateApprovalQr)
-//            BEFORE pdfService.overlayEsign() is called, and persists it to approval.qrPath.
-//            Previously overlayEsign read document.qrPathEsign (one generic QR reused at every
-//            level). Now every level — Staff, SPV, Marketing/Final — gets a QR pointing to
-//            /e/approval/{approvalId}, identifying exactly who signed at that point.
+// FIX-06  — (DIGANTI) Dulu tiap approval membuat QR sendiri dan menempelkannya,
+//            sehingga satu label memuat tiga QR. Sekarang QR dokumen ditempel
+//            sekali di Level 0 dan halaman publiknya menampilkan seluruh rantai;
+//            level 1 dan 2 tidak menempel apa pun. Lihat header pdf.service.js.
+//            approval.qrPath berhenti diisi untuk dokumen baru, tapi tetap
+//            dilayani untuk label lama yang sudah tercetak.
 
 const fs     = require('fs');
 const path   = require('path');
@@ -118,33 +119,33 @@ exports.approve = async (req, res, next) => {
       if (!nextApprover) return res.status(400).json({ success: false, message: 'Invalid next approver' });
     }
 
-    // ── FIX-06: Generate THIS approval's own QR before overlay ───────────
-    // Must happen before overlayEsign, since overlayEsign now reads approval.qrPath.
-    const docStorageDir = path.dirname(approval.document.pathOriginal);
-    let qrPath = null;
-    try {
-      qrPath = await qrService.generateApprovalQr(approval.id, docStorageDir, approval.level);
-    } catch (qrErr) {
-      logger.error('Approval QR generation failed:', qrErr);
-      return res.status(500).json({ success: false, message: 'Failed to generate approval QR', code: 'QR_ERROR' });
+    // ── Penempelan hanya terjadi di Level 0 ─────────────────────────────
+    // Satu QR per dokumen (document.qrPathOriginal → /e/{docUuid}), ditempel
+    // sekali oleh Staff Regulatory bersama footer stamp. Level 1 dan 2 tidak
+    // menggambar apa pun: persetujuan mereka tercatat di database dan langsung
+    // terlihat di halaman publik yang dituju QR itu. Dulu tiap level menempel
+    // QR sendiri, sehingga satu label bisa membawa tiga QR yang masing-masing
+    // hanya mewakili satu approver.
+    const isLevel0 = approval.level === 0;
+    const position = value.position || null;
+
+    if (position && !isLevel0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Posisi QR hanya dapat diatur di Level 0 — level berikutnya tidak menempel stamp',
+      });
     }
 
-    // Persist qrPath onto the approval record BEFORE overlay so overlayEsign can read it.
-    // (overlayEsign receives the in-memory `approval` object directly, so attach it there too.)
-    await prisma.documentApproval.update({ where: { id: approval.id }, data: { qrPath } });
-    approval.qrPath = qrPath;
-
-    // Process PDF overlay BEFORE transaction — rollback file on TX failure
-    const position = value.position || null;
-    // Only meaningful at level 0 — pdfService ignores it for level > 0 anyway,
-    // but only forward it there defensively (matches the level check above).
-    const footerPosition = approval.level === 0 ? (value.footerPosition || null) : null;
     let signedPath = null;
-    try {
-      signedPath = await pdfService.overlayEsign(approval.document, approval, position, isFinalLevel, footerPosition);
-    } catch (pdfErr) {
-      logger.error('PDF overlay failed:', pdfErr);
-      return res.status(500).json({ success: false, message: 'Failed to process PDF signature', code: 'PDF_ERROR' });
+    if (isLevel0) {
+      try {
+        signedPath = await pdfService.overlayEsign(
+          approval.document, approval, position, value.footerPosition || null,
+        );
+      } catch (pdfErr) {
+        logger.error('PDF overlay failed:', pdfErr);
+        return res.status(500).json({ success: false, message: 'Failed to process PDF signature', code: 'PDF_ERROR' });
+      }
     }
 
     try {
@@ -175,16 +176,17 @@ exports.approve = async (req, res, next) => {
           });
         }
 
-        if (approval.level === 0) {
+        if (isLevel0) {
+          const fp = value.footerPosition;
           const footerSettings = await pdfService.getSettings();
           const footerData = {
-            pageNumber: footerPosition?.pageNumber ?? footerSettings.footerDefaultPage,
-            xPercent:   footerPosition?.xPercent   ?? footerSettings.footerDefaultXPercent,
-            yPercent:   footerPosition?.yPercent   ?? footerSettings.footerDefaultYPercent,
-            widthPt:    footerPosition?.widthPt    ?? footerSettings.footerDefaultWidthPt,
-            heightPt:   footerPosition?.heightPt   ?? footerSettings.footerDefaultHeightPt,
-            fontSize:   footerPosition?.fontSize   ?? footerSettings.footerDefaultFontSize,
-            rotation:   footerPosition?.rotation   ?? footerSettings.footerDefaultRotation,
+            pageNumber: fp?.pageNumber ?? footerSettings.footerDefaultPage,
+            xPercent:   fp?.xPercent   ?? footerSettings.footerDefaultXPercent,
+            yPercent:   fp?.yPercent   ?? footerSettings.footerDefaultYPercent,
+            widthPt:    fp?.widthPt    ?? footerSettings.footerDefaultWidthPt,
+            heightPt:   fp?.heightPt   ?? footerSettings.footerDefaultHeightPt,
+            fontSize:   fp?.fontSize   ?? footerSettings.footerDefaultFontSize,
+            rotation:   fp?.rotation   ?? footerSettings.footerDefaultRotation,
           };
           await tx.documentFooterPosition.upsert({
             where:  { documentId: approval.documentId },
@@ -193,12 +195,19 @@ exports.approve = async (req, res, next) => {
           });
         }
 
+        // Hanya ada SATU berkas hasil penempelan, ditulis di Level 0. Level
+        // berikutnya tidak menghasilkan berkas baru, jadi tidak ada rantai
+        // pathSignedLevel1 → pathSignedFinal lagi: semuanya menunjuk berkas yang
+        // sama. Nama kolom dipertahankan supaya dokumen lama tetap terbaca.
+        const stampedPath = signedPath || approval.document.pathSignedLevel0;
+
         if (isFinalLevel) {
           const documentUpdateData = {
             status:          'APPROVED',
-            pathSignedFinal: signedPath,
+            pathSignedFinal: stampedPath,
             tanggalApproval: new Date(),
           };
+          if (isLevel0) documentUpdateData.pathSignedLevel0 = signedPath;
           if (approval.level === 1) documentUpdateData.tanggalVerifikasi = new Date();
 
           await tx.document.update({
@@ -206,14 +215,16 @@ exports.approve = async (req, res, next) => {
             data: documentUpdateData,
           });
         } else {
-          const levelField = approval.level === 1 ? 'pathSignedLevel1' : `pathSignedLevel${approval.level}`;
-          const documentUpdateData = { [levelField]: signedPath };
+          const documentUpdateData = {};
+          if (isLevel0) documentUpdateData.pathSignedLevel0 = signedPath;
           if (approval.level === 1) documentUpdateData.tanggalVerifikasi = new Date();
 
-          await tx.document.update({
-            where: { id: approval.documentId },
-            data:  documentUpdateData,
-          });
+          if (Object.keys(documentUpdateData).length > 0) {
+            await tx.document.update({
+              where: { id: approval.documentId },
+              data:  documentUpdateData,
+            });
+          }
           await tx.documentApproval.create({
             data: {
               documentId: approval.documentId,

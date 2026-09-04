@@ -60,12 +60,22 @@ const FOOTER_SIZE_LIMIT_PT = {
   minFont: 5, maxFont: 24,
 };
 
+// Jumlah level approval: Staff Regulatory (0) → SPV (1) → Manager (2).
+//
+// Dulu angka ini diturunkan dari daftar nama berkas PDF di pdf.service, karena
+// tiap level menulis berkas sendiri — jadi batas levelnya terikat pada batas
+// teknis penulisan berkas. Sejak QR ditempel sekali saja di Level 0, level
+// berikutnya tidak menulis PDF apa pun, dan keterikatan itu hilang. Yang
+// tersisa murni aturan bisnis (PRD OI-03: tiga tingkat).
+const MAX_APPROVAL_LEVEL = 2;
+
 const PT_PER_MM = 72 / 25.4;
 
 const toMm = (pt) => pt * 25.4 / 72;
 const toPt = (mm) => mm * PT_PER_MM;
 
 module.exports = {
+  MAX_APPROVAL_LEVEL,
   QR_SIZE_LIMIT_PT,
   FOOTER_SIZE_LIMIT_PT,
   QR_SIZE_ADVISORY_MIN_PT,

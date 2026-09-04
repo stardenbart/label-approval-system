@@ -106,7 +106,25 @@ export default function ESignPublicPage() {
 
       {/* Signing History */}
       <div className="card p-5">
-        <h3 className="font-semibold text-gray-900 mb-4">Signing History</h3>
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+          <h3 className="font-semibold text-gray-900">Riwayat Persetujuan</h3>
+          {/* Satu label kini hanya membawa SATU QR, jadi halaman inilah satu-satunya
+              tempat orang melihat berapa banyak yang sudah menyetujui — jangan
+              biarkan pembaca menghitung sendiri dari daftar di bawah. */}
+          {doc.progress && (
+            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+              doc.progress.isDeclined ? 'bg-red-100 text-red-700'
+              : doc.progress.isComplete ? 'bg-green-100 text-green-700'
+              : 'bg-amber-100 text-amber-700'
+            }`}>
+              {doc.progress.isDeclined
+                ? `Ditolak di Level ${doc.progress.declinedAtLevel}`
+                : doc.progress.isComplete
+                  ? `Disetujui lengkap · ${doc.progress.approvedCount} level`
+                  : `${doc.progress.approvedCount} level disetujui · menunggu Level ${doc.progress.waitingLevel}`}
+            </span>
+          )}
+        </div>
         {doc.approvals?.length === 0 && (
           <p className="text-sm text-gray-400">There's no signing history yet</p>
         )}

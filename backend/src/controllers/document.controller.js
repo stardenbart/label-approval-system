@@ -376,30 +376,33 @@ exports.upload = async (req, res, next) => {
       throw txErr;
     }
 
-    // Original QR (identifies the raw uploaded file) is generated regardless
-    // of role — it doesn't depend on any approval having happened yet.
-    qrService.generateOriginalQr(docUuid, docStorageDir)
+    // QR dokumen — SATU-SATUNYA QR yang nanti ditempel ke PDF, menunjuk ke
+    // /e/{docUuid}. Dulu ini cuma bisa diunduh dan tidak pernah ditempel;
+    // sekarang Level 0 menempelkannya, jadi ia harus sudah ada sebelum
+    // penempelan berjalan.
+    const originalQrPromise = qrService.generateOriginalQr(docUuid, docStorageDir)
       .then(async (qrOriginalPath) => {
         await prisma.document.update({ where: { id: docUuid }, data: { qrPathOriginal: qrOriginalPath } });
+        return qrOriginalPath;
       })
       .catch((err) => {
         logger.error(`Original QR generation failed for doc ${docUuid}: ${err.message}`);
+        return null;
       });
 
     if (!isUploaderRole) {
-      // ── Legacy/direct flow ONLY — Fire-and-forget: generate QR, then stamp
-      //    Level 0 PDF immediately, exactly as before this feature existed.
-      //    isFinalLevel is always false: this branch requires a Level-1 SPV
-      //    mapping to exist (NO_APPROVER check above), so Level 0 can never
-      //    be the final level here.
-      qrService.generateApprovalQr(approvalLevel0Uuid, docStorageDir, 0)
-        .then(async (approvalQrPath) => {
-          await prisma.documentApproval.update({ where: { id: approvalLevel0Uuid }, data: { qrPath: approvalQrPath } });
-
+      // ── Alur superadmin/langsung: Level 0 otomatis disetujui saat upload,
+      //    jadi penempelan QR dokumen + footer juga terjadi di sini.
+      //
+      //    Menunggu originalQrPromise itu WAJIB, bukan kerapian: dulu pembuatan
+      //    QR dan penempelan berjalan sebagai dua rantai paralel, dan sejak yang
+      //    ditempel adalah QR dokumen, penempelan bisa mendahului berkasnya.
+      originalQrPromise
+        .then(async () => {
           const freshDoc        = await prisma.document.findUnique({ where: { id: docUuid } });
           const level0Approval  = await prisma.documentApproval.findUnique({ where: { id: approvalLevel0Uuid } });
 
-          const signedLevel0Path = await pdfService.overlayEsign(freshDoc, level0Approval, position, false, footerPosition);
+          const signedLevel0Path = await pdfService.overlayEsign(freshDoc, level0Approval, position, footerPosition);
           const settings = await pdfService.getSettings();
 
           await prisma.$transaction(async (tx) => {

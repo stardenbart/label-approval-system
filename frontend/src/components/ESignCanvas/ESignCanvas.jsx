@@ -21,6 +21,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  *   defaults  — { xPercent, yPercent, widthPt, heightPt, pageNumber }
  *   limits    — { minWidthPt, maxWidthPt }
  *   onChange  — (position) => void  { pageNumber, xPercent, yPercent, widthPt, heightPt }
+ *   readOnly  — true untuk level approval di atas 0: PDF tetap bisa dibaca dan
+ *               di-zoom, tapi tidak ada kotak yang bisa digeser. Sejak QR
+ *               ditempel sekali di Level 0, level berikutnya memang tidak
+ *               menempel apa pun — stamp yang terlihat sudah menyatu di PDF-nya.
  *   footerBox — optional second draggable box for the combined "ID Regulatory /
  *               Nama Label / Nama File" stamp. Shape:
  *               { enabled, draggable,
@@ -41,7 +45,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  *   FIX-04 — pdfReady state as explicit render trigger after PDF load.
  *            Avoids blank canvas when setPageNum(1) → pageNum already 1 → no re-render.
  */
-export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onChange, footerBox }) {
+export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onChange, footerBox, readOnly = false }) {
   const canvasRef    = useRef(null);
   const containerRef = useRef(null);
   const pdfRef       = useRef(null);
@@ -398,8 +402,9 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
           <ZoomIn size={14} />
         </button>
 
-        <div className="w-px h-5 bg-gray-300 mx-1" />
+        {!readOnly && <div className="w-px h-5 bg-gray-300 mx-1" />}
 
+        {!readOnly && <>
         <button
           type="button"
           onClick={() => handleResize(-5)}
@@ -443,10 +448,11 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
         <button type="button" onClick={resetToDefault} className="btn-secondary py-1 px-2 ml-auto text-xs">
           <RotateCcw size={12} /> Reset
         </button>
+        </>}
       </div>
 
       {/* Footer stamp controls (additive — only shown when the footer box is draggable) */}
-      {footerEnabled && footerBox.draggable && (
+      {!readOnly && footerEnabled && footerBox.draggable && (
         <div className="flex items-center gap-2 flex-wrap bg-amber-50 rounded-lg p-2 border border-amber-200">
           <span className="text-xs font-medium text-amber-700 mr-1">Stamp Footer:</span>
 
@@ -496,7 +502,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
           <div className="relative inline-block">
             <canvas ref={canvasRef} className="block shadow-md" />
 
-            {!pdfLoading && pdfReady && canvasSize.w > 0 && (
+            {!readOnly && !pdfLoading && pdfReady && canvasSize.w > 0 && (
               <Rnd
                 size={{ width: ptToPx(stampSize.w), height: ptToPx(stampSize.h) }}
                 position={stampPos}
@@ -547,7 +553,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
               </Rnd>
             )}
 
-            {footerEnabled && !pdfLoading && pdfReady && canvasSize.w > 0 && (
+            {!readOnly && footerEnabled && !pdfLoading && pdfReady && canvasSize.w > 0 && (
               <Rnd
                 size={{ width: ptToPx(footerSize.w), height: ptToPx(footerSize.h) }}
                 position={footerPos}
@@ -605,9 +611,13 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
       </div>
 
       <p className="text-xs text-gray-400 flex items-center gap-1">
+        {readOnly ? (
+          'Pratinjau saja — QR dan stamp footer sudah menyatu di dokumen ini sejak Level 0.'
+        ) : (<>
         <Move size={11} />
-        Drag QR box to specified sign area. Ketik ukuran atau pakai QR +/− untuk menyesuaikan.
-        {footerEnabled && footerBox.draggable && ' Drag the dashed amber box to position the ID/Label/File stamp.'}
+        Geser kotak QR ke area tanda tangan. Ketik ukuran atau tarik sudut kotak untuk menyesuaikan.
+        {footerEnabled && footerBox.draggable && ' Kotak kuning putus-putus untuk posisi stamp ID/Label/Nama File.'}
+        </>)}
       </p>
     </div>
   );

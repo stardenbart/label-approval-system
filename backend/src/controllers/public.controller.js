@@ -48,7 +48,31 @@ exports.esignPage = async (req, res, next) => {
 
     await auditService.log(null, 'QR_ESIGN_ACCESSED', 'documents', doc.id, req.ip, { uuid: doc.id });
 
-    res.json({ success: true, data: doc });
+    // Ringkasan rantai. Sejak satu label hanya membawa SATU QR, halaman inilah
+    // satu-satunya tempat orang melihat berapa banyak yang sudah menyetujui —
+    // jadi jangan biarkan pembaca menghitung sendiri dari daftar.
+    //
+    // Tidak ada "dari N": jumlah level ditentukan data mapping saat approval
+    // berjalan, jadi total yang sebenarnya belum diketahui sampai rantainya
+    // tuntas. Menampilkan angka total yang ditebak akan menyesatkan.
+    const approved = doc.approvals.filter(a => a.status === 'APPROVED');
+    const pending  = doc.approvals.find(a => a.status === 'PENDING');
+    const declined = doc.approvals.find(a => a.status === 'DECLINED');
+
+    res.json({
+      success: true,
+      data: {
+        ...doc,
+        progress: {
+          approvedCount: approved.length,
+          isComplete:    doc.status === 'APPROVED',
+          isDeclined:    doc.status === 'DECLINED',
+          waitingLevel:  pending ? pending.level : null,
+          waitingFor:    pending?.approver?.name || null,
+          declinedAtLevel: declined ? declined.level : null,
+        },
+      },
+    });
   } catch (err) { next(err); }
 };
 
