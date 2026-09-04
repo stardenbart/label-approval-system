@@ -1,5 +1,5 @@
 // frontend/src/pages/ProductCategoryPage.jsx
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Grid, Plus, Edit2, Trash2, Loader2, X,
@@ -344,7 +344,7 @@ export default function ProductCategoryPage() {
 
   // ── Group actions ──────────────────────────────────────────────
   async function deleteGroup(group) {
-    if (!confirm(`Deactivate group "${group.name}" (${group.code})?\Categories in this group will not be deleted.`)) return;
+    if (!confirm(`Deactivate group "${group.name}" (${group.code})?\n\nCategories in this group will not be deleted.`)) return;
     try {
       await api.delete(`/products/groups/${group.id}`);
       toast.success('Group successfully deactivated');

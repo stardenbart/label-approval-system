@@ -1,5 +1,5 @@
 // frontend/src/pages/DocumentUploadPage.jsx
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate, Link }       from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload, FileText, X, Loader2, AlertTriangle, AlertCircle, PenTool, Info } from 'lucide-react';

@@ -1,7 +1,7 @@
 // frontend/src/pages/UserManagementPage.jsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Users, Plus, Edit2, Key, UserX, UserCheck, Loader2, X, Link2, Trash2, Shield } from 'lucide-react';
+import { Users, Plus, Edit2, Key, UserX, UserCheck, Loader2, X, Link2, Trash2 } from 'lucide-react';
 import api         from '../services/api';
 import { qk } from '../services/queryKeys';
 import { afterUserChange } from '../services/cacheSync';

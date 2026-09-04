@@ -1,6 +1,6 @@
 // frontend/src/components/NotificationBell/NotificationBell.jsx
-import React, { useState, useEffect, useRef } from 'react';
-import { Bell, Check, CheckCheck, ExternalLink } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Bell, CheckCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';

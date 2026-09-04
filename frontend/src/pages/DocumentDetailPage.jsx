@@ -1,5 +1,5 @@
 // frontend/src/pages/DocumentDetailPage.jsx
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
@@ -184,7 +184,7 @@ export default function DocumentDetailPage() {
             <h3 className="font-semibold text-gray-900 mb-3">Approval History</h3>
             {doc.approvals?.length === 0 && <p className="text-sm text-gray-400">There's no approval yet</p>}
             <div className="space-y-3">
-              {doc.approvals?.map((a, i) => (
+              {doc.approvals?.map((a) => (
                 <div key={a.id} className="flex gap-3">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5
                     ${a.status === 'APPROVED' ? 'bg-green-100' : a.status === 'DECLINED' ? 'bg-red-100' : 'bg-yellow-100'}`}>

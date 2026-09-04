@@ -1,5 +1,5 @@
 // frontend/src/pages/SystemSettingsPage.jsx
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Settings, Save, RotateCcw, Loader2 } from 'lucide-react';
 import api   from '../services/api';

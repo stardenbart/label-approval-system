@@ -1,8 +1,8 @@
 // frontend/src/pages/LabelCheckFormPage.jsx
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckSquare, AlertTriangle, Save, Send, ArrowLeft, Loader2, Upload, Trash2, Plus, X } from 'lucide-react';
+import { CheckSquare, AlertTriangle, Save, Send, ArrowLeft, Loader2, Upload, Plus, X } from 'lucide-react';
 import api   from '../services/api';
 import { qk } from '../services/queryKeys';
 import { afterLabelCheckChange } from '../services/cacheSync';
@@ -14,7 +14,7 @@ const STATUS_OPT = [
 ];
 
 // ─── Remark row — shows saved remarks from DB ─────────────────────
-function RemarkRow({ remark, resultId, onDeleted }) {
+function RemarkRow({ remark }) {
   // Load image via authenticated fetch (not direct img src)
   const [imgUrl, setImgUrl] = useState(null);
 
@@ -60,11 +60,6 @@ function AddRemarkModal({ resultId, onClose, onAdded }) {
     reader.onload = (ev) => setPreview(ev.target.result);
     reader.readAsDataURL(f);
   }
-
-  // Cleanup preview on unmount
-  useEffect(() => {
-    return () => { if (preview) {} }; // data URL doesn't need revocation
-  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -330,7 +325,7 @@ export default function LabelCheckFormPage() {
                     {isNG && (
                       <div className="mt-3 space-y-2">
                         {remarksList.map(r => (
-                          <RemarkRow key={r.id} remark={r} resultId={existingResult?.id} />
+                          <RemarkRow key={r.id} remark={r} />
                         ))}
 
                         {/* Warning if NG has no remarks */}

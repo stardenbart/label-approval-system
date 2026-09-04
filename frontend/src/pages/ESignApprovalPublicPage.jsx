@@ -1,9 +1,8 @@
 // frontend/src/pages/ESignApprovalPublicPage.jsx
-import React from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery }  from '@tanstack/react-query';
 import { format }    from 'date-fns';
-import { CheckCircle, XCircle, Clock, Shield, UserCheck } from 'lucide-react';
+import { CheckCircle, XCircle, Clock, Shield } from 'lucide-react';
 import axios from 'axios';
 import { qk } from '../services/queryKeys';
 

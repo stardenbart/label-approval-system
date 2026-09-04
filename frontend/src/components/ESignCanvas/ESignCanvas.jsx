@@ -1,5 +1,5 @@
 // frontend/src/components/ESignCanvas/ESignCanvas.jsx
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import Draggable    from 'react-draggable';
 import { Move, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, RotateCcw, Loader2 } from 'lucide-react';
@@ -75,7 +75,9 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     y: footerBox?.defaults?.yPercent ?? 97,
   });
   const [footerPos,  setFooterPos]  = useState({ x: 0, y: 0 });
-  const [footerSize, setFooterSize] = useState({
+  // Ukuran kotak footer ditetapkan sekali dari default — tidak pernah diubah
+  // setelah mount, jadi setter-nya memang tidak ada.
+  const [footerSize] = useState({
     w: footerBox?.defaults?.widthPt  || 220,
     h: footerBox?.defaults?.heightPt || 30,
   });
