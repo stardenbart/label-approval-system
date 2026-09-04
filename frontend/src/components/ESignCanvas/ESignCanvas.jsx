@@ -269,12 +269,39 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   // ---------------------------------------------------------------------------
   // Stamp resize
   // ---------------------------------------------------------------------------
+  // Rentang ukuran datang dari System Settings lewat prop `limits` — tidak ada
+  // angka cadangan yang di-hardcode di sini lagi. Dulu `|| 60` dan `|| 200`
+  // diam-diam mengambil alih kalau settings belum termuat, sehingga rentang yang
+  // disetel superadmin seolah tidak berpengaruh.
+  const sizeMin = limits?.minWidthPt;
+  const sizeMax = limits?.maxWidthPt;
+  const sizeReady = Number.isFinite(sizeMin) && Number.isFinite(sizeMax);
+
+  const toMm = (pt) => (pt * 25.4) / 72;
+
+  function applySize(nextW) {
+    if (!sizeReady) return;
+    const w = Math.round(Math.max(sizeMin, Math.min(sizeMax, nextW)));
+    // QR selalu persegi — memipihkannya membuat modul tidak lagi kotak dan
+    // pemindaian jadi rapuh, jadi tinggi mengikuti lebar.
+    setStampSize({ w, h: w });
+    emitPosition(stampPos.x, stampPos.y, w, w);
+  }
+
   function handleResize(delta) {
-    const minW = limits?.minWidthPt || 60;
-    const maxW = limits?.maxWidthPt || 200;
-    const newW = Math.max(minW, Math.min(maxW, stampSize.w + delta));
-    setStampSize({ w: newW, h: newW });
-    emitPosition(stampPos.x, stampPos.y, newW, newW);
+    applySize(stampSize.w + delta);
+  }
+
+  // Isian angka: satu-satunya cara mencapai ukuran seperti 145pt. Sebelum ini
+  // hanya ada tombol ±10pt, jadi dari 60 ke 190 butuh 13 klik dan angka ganjil
+  // tidak mungkin dicapai sama sekali.
+  const [sizeDraft, setSizeDraft] = useState(String(Math.round(stampSize.w)));
+  useEffect(() => { setSizeDraft(String(Math.round(stampSize.w))); }, [stampSize.w]);
+
+  function commitSizeDraft() {
+    const parsed = parseFloat(sizeDraft);
+    if (Number.isFinite(parsed)) applySize(parsed);
+    else setSizeDraft(String(Math.round(stampSize.w)));
   }
 
   // ---------------------------------------------------------------------------
@@ -333,9 +360,45 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
 
         <div className="w-px h-5 bg-gray-300 mx-1" />
 
-        <button type="button" onClick={() => handleResize(-10)} className="btn-secondary py-1 px-2 text-xs">QR −</button>
-        <span className="text-xs text-gray-500 min-w-[40px] text-center">{Math.round(stampSize.w)}pt</span>
-        <button type="button" onClick={() => handleResize(+10)} className="btn-secondary py-1 px-2 text-xs">QR +</button>
+        <button
+          type="button"
+          onClick={() => handleResize(-5)}
+          disabled={!sizeReady || stampSize.w <= sizeMin}
+          className="btn-secondary py-1 px-2 text-xs"
+        >QR −</button>
+
+        <label className="flex items-center gap-1 text-xs text-gray-500">
+          <input
+            type="number"
+            value={sizeDraft}
+            min={sizeReady ? sizeMin : undefined}
+            max={sizeReady ? sizeMax : undefined}
+            disabled={!sizeReady}
+            onChange={e => setSizeDraft(e.target.value)}
+            onBlur={commitSizeDraft}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitSizeDraft(); } }}
+            className="w-16 px-1.5 py-0.5 text-xs text-center border border-gray-300 rounded focus:outline-none focus:ring-1 focus:ring-brand-400"
+            title={sizeReady ? `Ukuran QR ${sizeMin}–${sizeMax}pt` : 'Menunggu System Settings'}
+          />
+          pt
+        </label>
+
+        <button
+          type="button"
+          onClick={() => handleResize(+5)}
+          disabled={!sizeReady || stampSize.w >= sizeMax}
+          className="btn-secondary py-1 px-2 text-xs"
+        >QR +</button>
+
+        {/* Bagian regulatory berpikir dalam mm, bukan point. */}
+        <span className="text-xs text-gray-400 min-w-[52px]">
+          ≈ {toMm(stampSize.w).toFixed(1)} mm
+        </span>
+        {sizeReady && (
+          <span className="text-[11px] text-gray-400">
+            ({sizeMin}–{sizeMax}pt)
+          </span>
+        )}
 
         <button type="button" onClick={resetToDefault} className="btn-secondary py-1 px-2 ml-auto text-xs">
           <RotateCcw size={12} /> Reset
@@ -465,7 +528,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
 
       <p className="text-xs text-gray-400 flex items-center gap-1">
         <Move size={11} />
-        Drag QR box to specified sign area. Use QR +/− to adjust the stamp size.
+        Drag QR box to specified sign area. Ketik ukuran atau pakai QR +/− untuk menyesuaikan.
         {footerEnabled && footerBox.draggable && ' Drag the dashed amber box to position the ID/Label/File stamp.'}
       </p>
     </div>

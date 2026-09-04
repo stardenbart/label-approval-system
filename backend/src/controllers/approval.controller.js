@@ -16,6 +16,7 @@ const path   = require('path');
 const Joi    = require('joi')
 const { prisma }    = require('../config/prisma');
 const pdfService    = require('../services/pdf.service');
+const { QR_SIZE_LIMIT_PT } = require('../config/stamp');
 const qrService      = require('../services/qr.service');
 const notifService  = require('../services/notification.service');
 const emailService  = require('../services/email.service');
@@ -26,8 +27,13 @@ const positionSchema = Joi.object({
   pageNumber: Joi.number().integer().min(1).required(),
   xPercent:   Joi.number().min(0).max(100).required(),
   yPercent:   Joi.number().min(0).max(100).required(),
-  widthPt:    Joi.number().min(10).max(200).required(),
-  heightPt:   Joi.number().min(10).max(200).required(),
+  // Batas TEKNIS saja — pagar keselamatan yang sama dipakai saat upload maupun
+  // approve. Batas kebijakan (rentang yang boleh dipakai sehari-hari) datang
+  // dari System Settings dan diperiksa terpisah lewat pdfService.checkQrSize.
+  // Dulu di sini tertulis .max(200) sebagai angka mati, sehingga menaikkan batas
+  // lewat System Settings tidak pernah benar-benar berlaku.
+  widthPt:    Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max).required(),
+  heightPt:   Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max).required(),
 });
 
 const footerPositionSchema = Joi.object({
@@ -86,6 +92,16 @@ exports.approve = async (req, res, next) => {
 
     if (!isFinalLevel && !value.nextApproverId) {
       return res.status(400).json({ success: false, message: 'Next approver is required for non-final levels' });
+    }
+
+    // Ukuran QR harus berada dalam rentang yang disetel superadmin. Diperiksa di
+    // sini supaya jawabannya 400 dengan angka batasnya, bukan gambar yang
+    // diam-diam mengecil di PDF.
+    if (value.position) {
+      const sizeCheck = pdfService.checkQrSize(value.position, await pdfService.getSettings());
+      if (!sizeCheck.ok) {
+        return res.status(400).json({ success: false, message: sizeCheck.message, code: 'QR_SIZE_OUT_OF_RANGE' });
+      }
     }
 
     // Footer stamp position can only be set once, at Level 0 (Staff Regulatory).

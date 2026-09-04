@@ -120,8 +120,11 @@ export default function DocumentUploadPage() {
   } : null;
 
   const qrLimits = settings ? {
-    minWidthPt: parseFloat(settings.qr_min_width_pt || 60),
-    maxWidthPt: parseFloat(settings.qr_max_width_pt || 200),
+    // Tanpa fallback angka mati: rentang ini milik System Settings sepenuhnya.
+    // Kalau settings belum termuat, ESignCanvas menonaktifkan kontrol ukuran
+    // ketimbang diam-diam memakai rentang lain.
+    minWidthPt: parseFloat(settings.qr_min_width_pt),
+    maxWidthPt: parseFloat(settings.qr_max_width_pt),
   } : null;
 
   const footerDefaults = settings ? {

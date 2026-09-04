@@ -21,6 +21,7 @@ const emailService     = require('../services/email.service');
 const logger           = require('../config/logger');
 const { STORAGE_PATH } = require('../middleware/upload');
 const { resolveLevel0Approver } = require('../services/approver-resolution.service');
+const { QR_SIZE_LIMIT_PT } = require('../config/stamp');
 
 const APPROVAL_SELECT = {
   id: true, level: true, status: true,
@@ -39,8 +40,10 @@ const positionSchema = Joi.object({
   pageNumber: Joi.number().integer().min(1).default(1),
   xPercent:   Joi.number().min(0).max(100).required(),
   yPercent:   Joi.number().min(0).max(100).required(),
-  widthPt:    Joi.number().min(10).max(500).required(),
-  heightPt:   Joi.number().min(10).max(500).required(),
+  // Batas yang sama persis dengan approve — dulu di sini 500 dan di approve 200,
+  // jadi stamp Level 0 bisa lebih besar dari stamp level berikutnya.
+  widthPt:    Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max).required(),
+  heightPt:   Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max).required(),
 }).optional().allow(null);
 
 const footerPositionSchema = Joi.object({

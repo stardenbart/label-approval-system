@@ -32,6 +32,7 @@ const path   = require('path');
 const fs     = require('fs');
 const { prisma } = require('../config/prisma');
 const logger     = require('../config/logger');
+const { QR_SIZE_LIMIT_PT, SETTING_DEFAULTS } = require('../config/stamp');
 
 /**
  * Footer stamp (ID Regulatory / Nama Label / Nama File):
@@ -126,24 +127,30 @@ async function drawFooter(pdfDoc, document, footerPos) {
  */
 async function getSettings() {
   const rows = await prisma.systemSetting.findMany();
-  const map  = Object.fromEntries(rows.map(r => [r.key, parseFloat(r.value)]));
+  const stored = Object.fromEntries(rows.map(r => [r.key, parseFloat(r.value)]));
+  // Fallback diambil dari SETTING_DEFAULTS, sumber yang sama dengan seeder dan
+  // tombol "reset to defaults". Dulu berkas ini punya salinan angkanya sendiri
+  // dan sudah menyimpang — minimum di sini 10 sementara yang di-seed 60.
+  const map = { ...Object.fromEntries(
+    Object.entries(SETTING_DEFAULTS).map(([k, v]) => [k, parseFloat(v)])
+  ), ...stored };
   return {
-    defaultWidthPt:  map.qr_default_width_pt  || 100,
-    defaultHeightPt: map.qr_default_height_pt || 100,
-    defaultPage:     map.qr_default_page       || 1,
-    defaultXPercent: map.qr_default_x_percent  || 85,
-    defaultYPercent: map.qr_default_y_percent  || 5,
-    minWidthPt:      map.qr_min_width_pt       || 10,
-    maxWidthPt:      map.qr_max_width_pt       || 200,
+    defaultWidthPt:  map.qr_default_width_pt,
+    defaultHeightPt: map.qr_default_height_pt,
+    defaultPage:     map.qr_default_page,
+    defaultXPercent: map.qr_default_x_percent,
+    defaultYPercent: map.qr_default_y_percent,
+    minWidthPt:      map.qr_min_width_pt,
+    maxWidthPt:      map.qr_max_width_pt,
     // Footer stamp defaults — chosen to reproduce the old hardcoded bottom-left
     // ~18pt margin look on an A4-ish (~595pt wide) page for documents that are
     // never dragged (e.g. legacy behavior before this feature existed).
-    footerDefaultXPercent: map.footer_default_x_percent  || 3,
-    footerDefaultYPercent: map.footer_default_y_percent  || 97,
-    footerDefaultWidthPt:  map.footer_default_width_pt   || 220,
-    footerDefaultHeightPt: map.footer_default_height_pt  || 30,
-    footerDefaultPage:     map.footer_default_page       || 1,
-    footerDefaultFontSize: map.footer_default_font_size  || 7,
+    footerDefaultXPercent: map.footer_default_x_percent,
+    footerDefaultYPercent: map.footer_default_y_percent,
+    footerDefaultWidthPt:  map.footer_default_width_pt,
+    footerDefaultHeightPt: map.footer_default_height_pt,
+    footerDefaultPage:     map.footer_default_page,
+    footerDefaultFontSize: map.footer_default_font_size,
     footerDefaultRotation: [0, 90, 180, 270].includes(map.footer_default_rotation) ? map.footer_default_rotation : 0,
   };
 }
@@ -151,12 +158,45 @@ async function getSettings() {
 /**
  * Validate and clamp position values
  */
-function validatePosition(pos, settings) {
+function validatePosition(pos) {
   const xPercent = Math.max(0, Math.min(100, pos.xPercent));
   const yPercent = Math.max(0, Math.min(100, pos.yPercent));
-  const widthPt  = Math.max(settings.minWidthPt, Math.min(settings.maxWidthPt, pos.widthPt));
-  const heightPt = Math.max(settings.minWidthPt, Math.min(settings.maxWidthPt, pos.heightPt));
-  return { pageNumber: pos.pageNumber || 1, xPercent, yPercent, widthPt, heightPt };
+  // CATATAN: ukuran TIDAK lagi dipotong diam-diam ke rentang settings di sini.
+  // Dulu approver bisa memilih 180pt lalu mendapat 120pt tercetak tanpa satu pun
+  // pesan. Pelanggaran rentang kebijakan sekarang ditolak lebih awal oleh
+  // checkQrSize() di controller, dengan pesan yang menyebut angkanya. Yang masih
+  // dijepit adalah batas fisik halaman — dilakukan di overlayEsign(), tempat
+  // ukuran halaman sebenarnya diketahui.
+  return {
+    pageNumber: pos.pageNumber || 1,
+    xPercent,
+    yPercent,
+    widthPt:  pos.widthPt,
+    heightPt: pos.heightPt,
+  };
+}
+
+/**
+ * Apakah ukuran ini berada dalam rentang kebijakan yang disetel superadmin?
+ * Dipakai controller supaya penolakan datang sebagai 400 dengan pesan jelas,
+ * bukan sebagai gambar yang diam-diam mengecil.
+ *
+ * @returns {{ ok: boolean, message?: string }}
+ */
+function checkQrSize(position, settings) {
+  if (!position) return { ok: true };
+  const { minWidthPt: min, maxWidthPt: max } = settings;
+  for (const [field, val] of [['widthPt', position.widthPt], ['heightPt', position.heightPt]]) {
+    if (val < min || val > max) {
+      return {
+        ok: false,
+        message:
+          `Ukuran QR ${field} ${val}pt di luar rentang yang diizinkan ${min}–${max}pt. ` +
+          `Superadmin dapat mengubah rentang ini di System Settings.`,
+      };
+    }
+  }
+  return { ok: true };
 }
 
 /**
@@ -265,7 +305,7 @@ async function overlayEsign(document, approval, position, _isFinalLevel = false,
   const settings = await getSettings();
 
   const pos = position
-    ? validatePosition(position, settings)
+    ? validatePosition(position)
     : {
         pageNumber: settings.defaultPage,
         xPercent:   settings.defaultXPercent,
@@ -284,6 +324,19 @@ async function overlayEsign(document, approval, position, _isFinalLevel = false,
   const pageIndex = Math.max(0, Math.min(pages.length - 1, pos.pageNumber - 1));
   const page      = pages[pageIndex];
   const { width: pageWidthPt, height: pageHeightPt } = page.getSize();
+
+  // Batas paling atas yang sesungguhnya adalah kertasnya sendiri, bukan angka
+  // tetap: QR tidak boleh lebih besar dari halaman tempat ia dicetak. Halaman
+  // A4, A5, atau ukuran tidak lazim masing-masing dijepit ke dirinya sendiri.
+  const maxOnPage = Math.min(pageWidthPt, pageHeightPt);
+  if (pos.widthPt > maxOnPage || pos.heightPt > maxOnPage) {
+    logger.warn(
+      `QR ${pos.widthPt}x${pos.heightPt}pt melebihi halaman ${pageWidthPt.toFixed(0)}x` +
+      `${pageHeightPt.toFixed(0)}pt — dijepit ke ${maxOnPage.toFixed(0)}pt`
+    );
+    pos.widthPt  = Math.min(pos.widthPt,  maxOnPage);
+    pos.heightPt = Math.min(pos.heightPt, maxOnPage);
+  }
 
   const xPt = (pos.xPercent / 100) * pageWidthPt;
   const yPt = pageHeightPt - (pos.yPercent / 100) * pageHeightPt - pos.heightPt;
@@ -340,4 +393,4 @@ async function overlayEsign(document, approval, position, _isFinalLevel = false,
   return outPath;
 }
 
-module.exports = { overlayEsign, getSettings, MAX_APPROVAL_LEVEL };
+module.exports = { overlayEsign, getSettings, checkQrSize, MAX_APPROVAL_LEVEL, QR_SIZE_LIMIT_PT };
