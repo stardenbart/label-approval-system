@@ -5,8 +5,11 @@ import {
   Grid, ClipboardList, LogOut
 } from 'lucide-react';
 
+import { useQueryClient } from '@tanstack/react-query';
+
 import useAuthStore from '../../store/authStore';
 import api from '../../services/api';
+import { afterLogout } from '../../services/cacheSync';
 import NotificationBell from '../NotificationBell/NotificationBell.jsx';
 
 const NAV = [
@@ -22,6 +25,7 @@ const NAV = [
 export default function AppLayout() {
   const { user, clearAuth } = useAuthStore();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const visibleNav = NAV.filter(n => n.roles.includes(user?.role));
@@ -29,6 +33,9 @@ export default function AppLayout() {
   async function handleLogout() {
     try { await api.post('/auth/logout'); } catch {}
     clearAuth();
+    // Tanpa ini cache user sebelumnya masih di memori dan sempat terlihat oleh
+    // user berikutnya yang login di tab yang sama.
+    afterLogout(queryClient);
     navigate('/login');
   }
 

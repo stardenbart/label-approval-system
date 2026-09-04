@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Users, Plus, Edit2, Key, UserX, UserCheck, Loader2, X, Link2, Trash2, Shield } from 'lucide-react';
 import api         from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterUserChange } from '../services/cacheSync';
 import useAuthStore from '../store/authStore';
 import toast        from 'react-hot-toast';
 
@@ -127,12 +129,12 @@ function MappingTab() {
   const [loading, setLoading] = useState(false);
 
   const { data: mappings, isLoading: loadingMappings } = useQuery({
-    queryKey: ['mappings'],
+    queryKey: qk.mappings(),
     queryFn:  () => api.get('/users/mappings/all').then(r => r.data.data),
   });
-  const { data: groups }     = useQuery({ queryKey: ['groups'],  queryFn: () => api.get('/products/groups').then(r => r.data.data) });
-  const { data: users }      = useQuery({ queryKey: ['users'],   queryFn: () => api.get('/users').then(r => r.data.data) });
-  const { data: categories } = useQuery({ queryKey: ['product-categories'], queryFn: () => api.get('/products/categories').then(r => r.data.data) });
+  const { data: groups }     = useQuery({ queryKey: qk.productGroups(),  queryFn: () => api.get('/products/groups').then(r => r.data.data) });
+  const { data: users }      = useQuery({ queryKey: qk.users(),   queryFn: () => api.get('/users').then(r => r.data.data) });
+  const { data: categories } = useQuery({ queryKey: qk.productCategories(), queryFn: () => api.get('/products/categories').then(r => r.data.data) });
 
   const isLevel0 = form.level === '0';
   const categoriesInGroup = (categories || []).filter(
@@ -166,7 +168,7 @@ function MappingTab() {
         level:             parseInt(form.level),
       });
       toast.success(`Mapping Level ${form.level} saved`);
-      queryClient.invalidateQueries({ queryKey: ['mappings'] });
+      afterUserChange(queryClient);
       setForm(f => ({ ...f, approverUserId: '', productCategoryId: '' }));
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to save mapping');
@@ -180,7 +182,7 @@ function MappingTab() {
     try {
       await api.delete(`/users/mappings/${id}`);
       toast.success('Mapping deleted');
-      queryClient.invalidateQueries({ queryKey: ['mappings'] });
+      afterUserChange(queryClient);
     } catch (_) {
       toast.error('Failed to delete mapping');
     }
@@ -369,12 +371,12 @@ export default function UserManagementPage() {
   const [modal,      setModal]      = useState(null);
 
   const { data: users, isLoading } = useQuery({
-    queryKey: ['users'],
+    queryKey: qk.users(),
     queryFn:  () => api.get('/users').then(r => r.data.data),
   });
 
   function refresh() {
-    queryClient.invalidateQueries({ queryKey: ['users'] });
+    afterUserChange(queryClient);
     setModal(null);
   }
 

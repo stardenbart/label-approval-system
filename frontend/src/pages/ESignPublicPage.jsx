@@ -5,6 +5,7 @@ import { useQuery }  from '@tanstack/react-query';
 import { format }    from 'date-fns';
 import { CheckCircle, XCircle, Clock, Shield } from 'lucide-react';
 import axios from 'axios';
+import { qk } from '../services/queryKeys';
 
 function StatusBadge({ status }) {
   if (status === 'APPROVED')
@@ -36,7 +37,7 @@ export default function ESignPublicPage() {
   const { uuid } = useParams();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['esign-public', uuid],
+    queryKey: qk.esignPublic(uuid),
     queryFn:  () => axios.get(`/api/e/${uuid}`).then(r => r.data.data),
   });
 

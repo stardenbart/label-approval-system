@@ -9,14 +9,30 @@ import App from './App.jsx';
 import useAuthStore from './store/authStore.js';
 import './index.css';
 
+// Kebijakan kesegaran data.
+//
+// Sebelumnya SETIAP query di-poll 30 detik sekali — termasuk system settings,
+// master produk, dan audit log yang praktis tidak pernah berubah sendiri. Itu
+// beban sia-sia untuk server, sekaligus tetap terasa lambat pada data yang benar
+// -benar hidup karena 30 detik masih terlalu jarang untuk antrean approval.
+//
+// Sekarang dibalik: default TIDAK polling, dan polling dipasang eksplisit hanya
+// di query yang memang berubah karena orang lain (lihat masing-masing halaman).
+// Kesegaran selebihnya datang dari dua arah:
+//   • refetch saat tab kembali fokus / koneksi pulih
+//   • invalidate setelah tiap aksi — lihat services/cacheSync.js
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry:              1,
-      staleTime:          15_000,
-      refetchInterval:    30_000,
+      retry:                1,
+      staleTime:            15_000,
+      refetchInterval:      false,
+      refetchOnMount:       true,
       refetchOnWindowFocus: true,
-      refetchOnReconnect: true,
+      refetchOnReconnect:   true,
+      // Tab yang tersembunyi berhenti polling — tidak ada gunanya menyegarkan
+      // layar yang tidak dilihat siapa pun.
+      refetchIntervalInBackground: false,
     },
   },
 });

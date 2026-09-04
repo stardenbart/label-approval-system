@@ -4,6 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckSquare, AlertTriangle, Save, Send, ArrowLeft, Loader2, Upload, Trash2, Plus, X } from 'lucide-react';
 import api   from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterLabelCheckChange } from '../services/cacheSync';
 import toast from 'react-hot-toast';
 
 const STATUS_OPT = [
@@ -138,6 +140,7 @@ function AddRemarkModal({ resultId, onClose, onAdded }) {
 export default function LabelCheckFormPage() {
   const { id }      = useParams();
   const navigate    = useNavigate();
+  const queryClient = useQueryClient();
 
   const [results,    setResults]    = useState({});  // { parameterId: 'OK'|'NG' }
   const [saving,     setSaving]     = useState(false);
@@ -145,12 +148,12 @@ export default function LabelCheckFormPage() {
   const [remarkModal, setRemarkModal] = useState(null); // resultId to add remark for
 
   const { data: params, isLoading: loadingParams } = useQuery({
-    queryKey: ['label-check-params'],
+    queryKey: qk.labelCheckParams(),
     queryFn:  () => api.get('/label-check/parameters').then(r => r.data.data),
   });
 
-  const { data: form, refetch: refetchForm, isLoading: loadingForm } = useQuery({
-    queryKey: ['label-check-form', id],
+  const { data: form, isLoading: loadingForm } = useQuery({
+    queryKey: qk.labelCheckForm(id),
     queryFn:  () => api.get(`/label-check/form/${id}`).then(r => r.data.data),
   });
 
@@ -176,7 +179,9 @@ export default function LabelCheckFormPage() {
         results: entries.map(([parameterId, status]) => ({ parameterId: parseInt(parameterId), status })),
       });
       toast.success('Form tersimpan sebagai draft');
-      refetchForm();
+      // Selain form-nya sendiri, detail dokumen ikut berubah (ringkasan Label
+      // Check tampil di sana) — menyegarkan form saja tidak cukup.
+      afterLabelCheckChange(queryClient, id);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Gagal menyimpan');
     } finally {
@@ -217,6 +222,7 @@ export default function LabelCheckFormPage() {
       });
       await api.patch(`/label-check/form/${id}/submit`);
       toast.success('Form berhasil disubmit! Laporan pengecekan sedang digenerate.');
+      afterLabelCheckChange(queryClient, id);
       navigate(`/documents/${id}`);
     } catch (err) {
       toast.error(err.response?.data?.message || 'Gagal submit form');
@@ -251,7 +257,7 @@ export default function LabelCheckFormPage() {
         <AddRemarkModal
           resultId={remarkModal}
           onClose={() => setRemarkModal(null)}
-          onAdded={() => { refetchForm(); setRemarkModal(null); }}
+          onAdded={() => { afterLabelCheckChange(queryClient, id); setRemarkModal(null); }}
         />
       )}
 

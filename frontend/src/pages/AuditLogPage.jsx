@@ -4,6 +4,7 @@ import { useQuery }  from '@tanstack/react-query';
 import { format }    from 'date-fns';
 import { ClipboardList, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import api from '../services/api';
+import { qk } from '../services/queryKeys';
 
 export default function AuditLogPage() {
   const [page,     setPage]     = useState(1);
@@ -12,7 +13,7 @@ export default function AuditLogPage() {
   const [dateTo,   setDateTo]   = useState('');
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['audit', page, action, dateFrom, dateTo],
+    queryKey: qk.audit({ page, action, dateFrom, dateTo }),
     queryFn:  () => api.get('/audit', {
       params: { page, limit: 30, action: action || undefined, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined },
     }).then(r => r.data.data),

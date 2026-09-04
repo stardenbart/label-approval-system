@@ -7,6 +7,8 @@ import {
   AlertTriangle, CheckCircle2, Layers,
 } from 'lucide-react';
 import api   from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterProductChange } from '../services/cacheSync';
 import toast from 'react-hot-toast';
 
 // ─── Group Modal (Add / Edit) ──────────────────────────────────────
@@ -325,17 +327,18 @@ export default function ProductCategoryPage() {
   const importInputRef = useRef(null);
 
   const { data: groups, isLoading: loadingGroups } = useQuery({
-    queryKey: ['groups'],
+    queryKey: qk.productGroups(),
     queryFn:  () => api.get('/products/groups').then(r => r.data.data),
   });
   const { data: categories, isLoading: loadingCats } = useQuery({
-    queryKey: ['categories'],
+    queryKey: qk.productCategories(),
     queryFn:  () => api.get('/products/categories').then(r => r.data.data),
   });
 
   function refresh() {
-    queryClient.invalidateQueries({ queryKey: ['categories'] });
-    queryClient.invalidateQueries({ queryKey: ['groups'] });
+    // Kategori & grup juga dipakai halaman upload dan mapping approver — daftar
+    // lengkap apa saja yang ikut basi ada di services/cacheSync.js.
+    afterProductChange(queryClient);
     setModal(null);
   }
 

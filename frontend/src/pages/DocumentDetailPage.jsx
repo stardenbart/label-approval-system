@@ -5,6 +5,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Download, QrCode, FileText, CheckCircle, XCircle, Clock, ArrowLeft, Trash2 } from 'lucide-react';
 import api          from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterDocumentDelete } from '../services/cacheSync';
 import useAuthStore from '../store/authStore';
 import toast        from 'react-hot-toast';
 
@@ -39,8 +41,11 @@ export default function DocumentDetailPage() {
   const [qrOriginalUrl, setQrOriginalUrl] = useState(null);
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['document', id],
+    queryKey: qk.document(id),
     queryFn:  () => api.get(`/documents/${id}`).then(r => r.data.data),
+    // Berhenti polling begitu dokumen selesai — tidak akan berubah lagi.
+    refetchInterval: (query) =>
+      query.state.data?.status === 'PENDING_APPROVAL' ? 20_000 : false,
   });
 
   // Load QR images after doc data arrives
@@ -107,6 +112,7 @@ export default function DocumentDetailPage() {
     try {
       await api.delete(`/documents/${id}`);
       toast.success('Dokumen dihapus');
+      afterDocumentDelete(queryClient, id);
       navigate('/documents');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to delete');

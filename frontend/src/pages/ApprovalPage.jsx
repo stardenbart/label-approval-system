@@ -1,15 +1,18 @@
 // frontend/src/pages/ApprovalPage.jsx
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate }      from 'react-router-dom';
-import { useQuery }                    from '@tanstack/react-query';
+import { useQuery, useQueryClient }    from '@tanstack/react-query';
 import { CheckCircle, XCircle, Loader2, Search, ArrowLeft, FileText, Info } from 'lucide-react';
 import api          from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterApprovalAction } from '../services/cacheSync';
 import toast        from 'react-hot-toast';
 import ESignCanvas  from '../components/ESignCanvas/ESignCanvas.jsx';
 
 export default function ApprovalPage() {
   const { approvalId } = useParams();
   const navigate       = useNavigate();
+  const queryClient    = useQueryClient();
 
   const [notes,          setNotes]         = useState('');
   const [nextApproverId, setNextApproverId] = useState('');
@@ -25,13 +28,13 @@ export default function ApprovalPage() {
 
   // ── Fetch approval metadata ────────────────────────────────────
   const { data: approvalData, isLoading: loadingApproval, error: approvalError } = useQuery({
-    queryKey: ['approval', approvalId],
+    queryKey: qk.approval(approvalId),
     queryFn:  () => api.get(`/approvals/${approvalId}/suggested-approvers`).then(r => r.data.data),
   });
 
   // ── Fetch system settings (QR defaults) ───────────────────────
   const { data: settings } = useQuery({
-    queryKey: ['settings'],
+    queryKey: qk.settings(),
     queryFn:  () => api.get('/settings').then(r => r.data.data),
   });
 
@@ -137,6 +140,9 @@ export default function ApprovalPage() {
         footerPosition: approvalLevel === 0 ? (footerPosition || undefined) : undefined,
       });
       toast.success(isFinalLevel ? 'Final document approved!' : 'Document approved and forwarded to next approver!');
+      // Antrean pending, daftar & detail dokumen, lonceng notifikasi, dan audit
+      // log semuanya berubah karena satu aksi ini.
+      afterApprovalAction(queryClient, { documentId, approvalId });
       navigate('/my-pending');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to approve');
@@ -154,6 +160,7 @@ export default function ApprovalPage() {
     try {
       await api.post(`/approvals/${approvalId}/decline`, { notes: declineNotes.trim() });
       toast.success('Document declined');
+      afterApprovalAction(queryClient, { documentId, approvalId });
       navigate('/my-pending');
     } catch (err) {
       toast.error(err.response?.data?.message || 'failed to decline');

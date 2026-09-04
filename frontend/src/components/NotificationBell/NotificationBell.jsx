@@ -2,9 +2,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bell, Check, CheckCheck, ExternalLink } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import { id as localeId } from 'date-fns/locale';
 import api from '../../services/api';
+import { qk } from '../../services/queryKeys';
+import { afterNotificationRead } from '../../services/cacheSync';
 
 const TYPE_ICON = {
   APPROVAL_ASSIGNED: '📋',
@@ -15,19 +18,30 @@ const TYPE_ICON = {
 };
 
 export default function NotificationBell() {
-  const [count,       setCount]       = useState(0);
-  const [notifs,      setNotifs]      = useState([]);
-  const [open,        setOpen]        = useState(false);
-  const [loading,     setLoading]     = useState(false);
+  const [open, setOpen] = useState(false);
   const dropdownRef = useRef(null);
   const navigate    = useNavigate();
+  const queryClient = useQueryClient();
 
-  // Poll unread count every 30s
-  useEffect(() => {
-    fetchCount();
-    const interval = setInterval(fetchCount, 30_000);
-    return () => clearInterval(interval);
-  }, []);
+  // Lonceng ini dulu berdiri sendiri: useState + setInterval sendiri, di luar
+  // React Query. Akibatnya badge-nya tidak pernah tahu kalau ada aksi lain yang
+  // membuat notifikasi baru — approve dokumen tidak memperbarui badge sampai
+  // poll 30 detik berikutnya. Sekarang ikut cache bersama, jadi cacheSync bisa
+  // meng-invalidate-nya seperti data lain.
+  const { data: count = 0 } = useQuery({
+    queryKey: qk.notificationCount(),
+    queryFn:  () => api.get('/notifications/count').then(r => r.data.data.count),
+    refetchInterval: 30_000,
+  });
+
+  // Daftar isinya baru diambil saat dropdown dibuka — tidak ada gunanya
+  // menarik 20 notifikasi tiap 30 detik untuk panel yang tertutup.
+  const { data: notifs = [], isLoading: loading } = useQuery({
+    queryKey: qk.notifications(),
+    queryFn:  () => api.get('/notifications').then(r => r.data.data),
+    enabled:  open,
+    refetchInterval: open ? 30_000 : false,
+  });
 
   // Close on outside click
   useEffect(() => {
@@ -38,40 +52,35 @@ export default function NotificationBell() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  async function fetchCount() {
-    try {
-      const { data } = await api.get('/notifications/count');
-      setCount(data.data.count);
-    } catch (_) {}
-  }
-
-  async function openDropdown() {
+  function openDropdown() {
     setOpen((v) => !v);
-    if (!open) {
-      setLoading(true);
-      try {
-        const { data } = await api.get('/notifications');
-        setNotifs(data.data);
-      } catch (_) {}
-      setLoading(false);
-    }
   }
 
+  // Badge diperbarui optimistis lebih dulu supaya terasa instan, lalu
+  // di-invalidate agar angka sebenarnya datang dari server.
   async function markAll() {
     try {
+      queryClient.setQueryData(qk.notificationCount(), 0);
+      queryClient.setQueryData(qk.notifications(), (prev) =>
+        (prev || []).map(n => ({ ...n, isRead: true })));
       await api.patch('/notifications/read-all');
-      setNotifs(prev => prev.map(n => ({ ...n, isRead: true })));
-      setCount(0); // Immediate UI update — no need to wait for 30s poll
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      afterNotificationRead(queryClient);
+    }
   }
 
   async function handleMarkRead(notif) {
     if (notif.isRead) return;
     try {
+      queryClient.setQueryData(qk.notificationCount(), (prev) => Math.max(0, (prev || 0) - 1));
+      queryClient.setQueryData(qk.notifications(), (prev) =>
+        (prev || []).map(n => n.id === notif.id ? { ...n, isRead: true } : n));
       await api.patch(`/notifications/${notif.id}/read`);
-      setNotifs(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: true } : n));
-      setCount(prev => Math.max(0, prev - 1)); // Immediate badge update
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      afterNotificationRead(queryClient);
+    }
   }
 
   function handleClick(notif) {

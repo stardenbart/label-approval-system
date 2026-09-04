@@ -5,6 +5,7 @@ import { useQuery }  from '@tanstack/react-query';
 import { format }    from 'date-fns';
 import { CheckCircle, XCircle, Clock, Shield, UserCheck } from 'lucide-react';
 import axios from 'axios';
+import { qk } from '../services/queryKeys';
 
 const LEVEL_LABEL = {
   0: 'Staff (Self-Sign)',
@@ -52,7 +53,7 @@ export default function ESignApprovalPublicPage() {
   const { approvalId } = useParams();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['esign-approval-public', approvalId],
+    queryKey: qk.esignApprovalPublic(approvalId),
     queryFn:  () => axios.get(`/api/e/approval/${approvalId}`).then(r => r.data.data),
   });
 

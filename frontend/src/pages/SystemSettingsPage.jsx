@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Settings, Save, RotateCcw, Loader2 } from 'lucide-react';
 import api   from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterSettingsChange } from '../services/cacheSync';
 import toast from 'react-hot-toast';
 
 export default function SystemSettingsPage() {
@@ -11,7 +13,7 @@ export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(false);
 
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: qk.settings(),
     queryFn:  () => api.get('/settings').then(r => r.data.data),
   });
 
@@ -54,7 +56,7 @@ export default function SystemSettingsPage() {
         footer_default_font_size: parseFloat(form.footer_default_font_size),
         footer_default_rotation:  parseInt(form.footer_default_rotation),
       });
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      afterSettingsChange(queryClient);
       toast.success('Settings berhasil disimpan');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Gagal menyimpan');
@@ -68,7 +70,7 @@ export default function SystemSettingsPage() {
     setLoading(true);
     try {
       await api.post('/settings/reset');
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      afterSettingsChange(queryClient);
       toast.success('Settings direset ke default');
     } catch (_) {
       toast.error('Gagal reset');

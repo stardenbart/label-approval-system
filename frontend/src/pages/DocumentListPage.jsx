@@ -13,6 +13,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import api           from '../services/api';
+import { qk } from '../services/queryKeys';
 import useAuthStore  from '../store/authStore';
 import { format }    from 'date-fns';
 
@@ -40,12 +41,12 @@ export default function DocumentListPage() {
   const [dateTo,    setDateTo]    = useState('');
 
   const { data: groupsData } = useQuery({
-    queryKey: ['product-groups'],
+    queryKey: qk.productGroups(),
     queryFn:  () => api.get('/products/groups').then(r => r.data.data),
   });
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['documents', page, search, status, groupId, dateField, dateFrom, dateTo],
+    queryKey: qk.documents({ page, search, status, groupId, dateField, dateFrom, dateTo }),
     queryFn:  () => api.get('/documents', {
       params: {
         page,
@@ -59,6 +60,8 @@ export default function DocumentListPage() {
       },
     }).then(r => r.data.data),
     keepPreviousData: true,
+    // Orang lain bisa approve/upload sementara daftar ini terbuka.
+    refetchInterval: 60_000,
   });
 
   const items      = data?.items      || [];

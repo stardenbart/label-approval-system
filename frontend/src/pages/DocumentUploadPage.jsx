@@ -1,9 +1,11 @@
 // frontend/src/pages/DocumentUploadPage.jsx
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate, Link }       from 'react-router-dom';
-import { useQuery }                from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Upload, FileText, X, Loader2, AlertTriangle, AlertCircle, PenTool, Info } from 'lucide-react';
 import api          from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterDocumentUpload } from '../services/cacheSync';
 import toast        from 'react-hot-toast';
 import ESignCanvas  from '../components/ESignCanvas/ESignCanvas.jsx';
 import useAuthStore from '../store/authStore';
@@ -17,6 +19,7 @@ export default function DocumentUploadPage() {
   // PENDING) instead of being auto-signed. 'superadmin' keeps the original
   // direct-sign flow untouched. See document.controller.js#upload().
   const isUploaderRole = user?.role === 'uploader';
+  const queryClient    = useQueryClient();
 
   const [file,     setFile]     = useState(null);
   const [form,     setForm]     = useState({
@@ -36,29 +39,29 @@ export default function DocumentUploadPage() {
   const [manuallyChanged,  setManuallyChanged]  = useState(false);
 
   const { data: categoriesData } = useQuery({
-    queryKey: ['product-categories'],
+    queryKey: qk.productCategories(),
     queryFn:  () => api.get('/products/categories').then(r => r.data.data),
   });
 
   const { data: mappingsData } = useQuery({
-    queryKey: ['mappings'],
+    queryKey: qk.mappings(),
     queryFn:  () => api.get('/users/mappings/all').then(r => r.data.data),
   });
 
   const { data: settings } = useQuery({
-    queryKey: ['settings'],
+    queryKey: qk.settings(),
     queryFn:  () => api.get('/settings').then(r => r.data.data),
     enabled:  !isUploaderRole, // QR position settings are irrelevant — uploader never sees the canvas
   });
 
   const { data: candidatesData } = useQuery({
-    queryKey: ['approver-candidates'],
+    queryKey: qk.approverCandidates(),
     queryFn:  () => api.get('/users/approver-candidates').then(r => r.data.data),
     enabled:  isUploaderRole,
   });
 
   const { data: suggestedApprover } = useQuery({
-    queryKey: ['suggest-level0', form.productCategoryId],
+    queryKey: qk.suggestLevel0(form.productCategoryId),
     queryFn:  () => api.get('/users/mappings/suggest-level0', {
       params: { productCategoryId: form.productCategoryId },
     }).then(r => r.data.data),
@@ -196,6 +199,7 @@ export default function DocumentUploadPage() {
           ? `Document successfully uploaded! ID: ${data.data.regulatoryId} — waiting for Staff Regulatory review.`
           : `Document successfully uploaded! ID: ${data.data.regulatoryId}`
       );
+      afterDocumentUpload(queryClient);
       navigate(`/documents/${data.data.id}`);
     } catch (err) {
       const code    = err.response?.data?.code;
