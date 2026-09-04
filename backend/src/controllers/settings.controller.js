@@ -4,7 +4,7 @@
 const Joi    = require('joi');
 const { prisma } = require('../config/prisma');
 const auditService = require('../services/audit.service');
-const { SETTING_DEFAULTS, QR_SIZE_LIMIT_PT, QR_SIZE_ADVISORY_MIN_PT } = require('../config/stamp');
+const { SETTING_DEFAULTS, QR_SIZE_LIMIT_PT, QR_SIZE_ADVISORY_MIN_PT, FOOTER_SIZE_LIMIT_PT } = require('../config/stamp');
 
 const DEFAULTS = SETTING_DEFAULTS;
 
@@ -20,6 +20,7 @@ exports.getAll = async (req, res, next) => {
       qrMinPt:        QR_SIZE_LIMIT_PT.min,
       qrMaxPt:        QR_SIZE_LIMIT_PT.max,
       qrAdvisoryMinPt: QR_SIZE_ADVISORY_MIN_PT,
+      footer:          FOOTER_SIZE_LIMIT_PT,
     };
 
     res.json({ success: true, data });

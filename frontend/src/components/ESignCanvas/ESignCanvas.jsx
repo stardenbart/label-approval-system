@@ -1,7 +1,7 @@
 // frontend/src/components/ESignCanvas/ESignCanvas.jsx
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import Draggable    from 'react-draggable';
+import { Rnd }      from 'react-rnd';
 import { Move, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, RotateCcw, Loader2 } from 'lucide-react';
 import api from '../../services/api';
 
@@ -75,9 +75,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     y: footerBox?.defaults?.yPercent ?? 97,
   });
   const [footerPos,  setFooterPos]  = useState({ x: 0, y: 0 });
-  // Ukuran kotak footer ditetapkan sekali dari default — tidak pernah diubah
-  // setelah mount, jadi setter-nya memang tidak ada.
-  const [footerSize] = useState({
+  const [footerSize, setFooterSize] = useState({
     w: footerBox?.defaults?.widthPt  || 220,
     h: footerBox?.defaults?.heightPt || 30,
   });
@@ -196,6 +194,27 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   }, [canvasSize, footerPosPercent, footerEnabled]);
 
   // ---------------------------------------------------------------------------
+  // Point (satuan PDF) <-> piksel layar
+  //
+  // Kanvas dirender pdfjs pada `scale`, jadi 1 pt halaman = `scale` piksel.
+  // Sebelum ini ukuran kotak dipakai apa adanya sebagai piksel padahal isinya
+  // point — pada zoom default 1.2 kotak tampak 20% lebih kecil dari hasil cetak,
+  // dan pada zoom 200% melesetnya 100%. Itu sebabnya PDF akhir tidak pernah
+  // sesuai dengan yang terlihat saat mengatur.
+  // ---------------------------------------------------------------------------
+  // Batas kotak footer datang dari server lewat prop; cadangan di sini hanya
+  // dipakai kalau settings belum termuat.
+  const footerLimits = {
+    minW: footerBox?.limits?.minW ?? 50,
+    maxW: footerBox?.limits?.maxW ?? 400,
+    minH: footerBox?.limits?.minH ?? 15,
+    maxH: footerBox?.limits?.maxH ?? 100,
+  };
+
+  const ptToPx = useCallback((pt) => pt * scale, [scale]);
+  const pxToPt = useCallback((px) => px / scale, [scale]);
+
+  // ---------------------------------------------------------------------------
   // Emit position to parent
   // ---------------------------------------------------------------------------
   const emitPosition = useCallback(
@@ -215,13 +234,29 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   // ---------------------------------------------------------------------------
   // Drag
   // ---------------------------------------------------------------------------
-  function handleDragStop(_e, data) {
-    const newX = Math.max(0, Math.min(data.x, canvasSize.w - stampSize.w));
-    const newY = Math.max(0, Math.min(data.y, canvasSize.h - stampSize.h));
+  function commitStamp(pxX, pxY, ptW, ptH) {
+    const maxX = Math.max(0, canvasSize.w - ptToPx(ptW));
+    const maxY = Math.max(0, canvasSize.h - ptToPx(ptH));
+    const newX = Math.max(0, Math.min(pxX, maxX));
+    const newY = Math.max(0, Math.min(pxY, maxY));
     setStampPos({ x: newX, y: newY });
     setStampPosPercent({ x: (newX / canvasSize.w) * 100, y: (newY / canvasSize.h) * 100 });
+    setStampSize({ w: ptW, h: ptH });
     setIsDragging(false);
-    emitPosition(newX, newY, stampSize.w, stampSize.h);
+    emitPosition(newX, newY, ptW, ptH);
+  }
+
+  function handleDragStop(_e, data) {
+    commitStamp(data.x, data.y, stampSize.w, stampSize.h);
+  }
+
+  // Tarik sudut kotak untuk mengubah ukuran. Lebar piksel dari Rnd dikembalikan
+  // ke point, lalu dijepit ke rentang System Settings — jadi apa pun yang
+  // ditarik user itulah yang tersimpan dan tercetak.
+  function handleStampResizeStop(ref, position) {
+    const ptW = Math.round(pxToPt(ref.offsetWidth));
+    const clamped = sizeReady ? Math.max(sizeMin, Math.min(sizeMax, ptW)) : ptW;
+    commitStamp(position.x, position.y, clamped, clamped);
   }
 
   // ---------------------------------------------------------------------------
@@ -243,13 +278,32 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     [canvasSize, pageNum, footerBox]
   );
 
-  function handleFooterDragStop(_e, data) {
-    const newX = Math.max(0, Math.min(data.x, canvasSize.w - footerSize.w));
-    const newY = Math.max(0, Math.min(data.y, canvasSize.h - footerSize.h));
+  function commitFooter(pxX, pxY, ptW, ptH) {
+    const maxX = Math.max(0, canvasSize.w - ptToPx(ptW));
+    const maxY = Math.max(0, canvasSize.h - ptToPx(ptH));
+    const newX = Math.max(0, Math.min(pxX, maxX));
+    const newY = Math.max(0, Math.min(pxY, maxY));
     setFooterPos({ x: newX, y: newY });
     setFooterPosPercent({ x: (newX / canvasSize.w) * 100, y: (newY / canvasSize.h) * 100 });
+    setFooterSize({ w: ptW, h: ptH });
     setFooterDragging(false);
-    emitFooterPosition(newX, newY, footerSize.w, footerSize.h, footerFontSize, footerRotation);
+    emitFooterPosition(newX, newY, ptW, ptH, footerFontSize, footerRotation);
+  }
+
+  function handleFooterDragStop(_e, data) {
+    commitFooter(data.x, data.y, footerSize.w, footerSize.h);
+  }
+
+  // Kotak footer bukan persegi — lebar dan tinggi bebas, masing-masing dijepit
+  // ke batas yang dikirim server.
+  function handleFooterResizeStop(ref, position) {
+    const ptW = Math.round(pxToPt(ref.offsetWidth));
+    const ptH = Math.round(pxToPt(ref.offsetHeight));
+    commitFooter(
+      position.x, position.y,
+      Math.max(footerLimits.minW, Math.min(footerLimits.maxW, ptW)),
+      Math.max(footerLimits.minH, Math.min(footerLimits.maxH, ptH)),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -316,20 +370,6 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     setStampSize({ w, h });
     emitPosition((px / 100) * canvasSize.w, (py / 100) * canvasSize.h, w, h);
   }
-
-  const bounds = {
-    left:   0,
-    top:    0,
-    right:  Math.max(0, canvasSize.w - stampSize.w),
-    bottom: Math.max(0, canvasSize.h - stampSize.h),
-  };
-
-  const footerBounds = {
-    left:   0,
-    top:    0,
-    right:  Math.max(0, canvasSize.w - footerSize.w),
-    bottom: Math.max(0, canvasSize.h - footerSize.h),
-  };
 
   // ---------------------------------------------------------------------------
   // Render
@@ -457,18 +497,32 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
             <canvas ref={canvasRef} className="block shadow-md" />
 
             {!pdfLoading && pdfReady && canvasSize.w > 0 && (
-              <Draggable
-                nodeRef={nodeRef}
+              <Rnd
+                size={{ width: ptToPx(stampSize.w), height: ptToPx(stampSize.h) }}
                 position={stampPos}
-                bounds={bounds}
-                onStart={() => setIsDragging(true)}
-                onStop={handleDragStop}
+                bounds="parent"
+                lockAspectRatio            /* QR harus tetap persegi */
+                minWidth={sizeReady ? ptToPx(sizeMin) : undefined}
+                maxWidth={sizeReady ? ptToPx(sizeMax) : undefined}
+                onDragStart={() => setIsDragging(true)}
+                onDragStop={handleDragStop}
+                onResizeStart={() => setIsDragging(true)}
+                onResizeStop={(_e, _dir, ref, _delta, position) => handleStampResizeStop(ref, position)}
+                enableResizing={sizeReady && {
+                  topLeft: true, topRight: true, bottomLeft: true, bottomRight: true,
+                }}
+                resizeHandleClasses={{
+                  topLeft:     'dal-handle',
+                  topRight:    'dal-handle',
+                  bottomLeft:  'dal-handle',
+                  bottomRight: 'dal-handle',
+                }}
+                className={`select-none transition-opacity ${isDragging ? 'opacity-70' : 'opacity-90'}`}
               >
                 <div
                   ref={nodeRef}
-                  className={`absolute cursor-move select-none transition-opacity ${isDragging ? 'opacity-70' : 'opacity-90'}`}
-                  style={{ width: stampSize.w, height: stampSize.h, top: 0, left: 0 }}
-                  title="Drag untuk pindahkan posisi tanda tangan"
+                  className="w-full h-full cursor-move relative"
+                  title="Geser untuk memindahkan · tarik sudut untuk mengubah ukuran"
                 >
                   {qrDataUrl ? (
                     <img
@@ -485,24 +539,43 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
                     </div>
                   )}
                   <div className="absolute inset-0 border-2 border-brand-500 rounded pointer-events-none" />
+                  {/* Ukuran sebenarnya, menempel di kotak — tidak perlu melirik toolbar */}
+                  <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-brand-500 px-1.5 text-[10px] font-medium leading-4 text-white">
+                    {Math.round(stampSize.w)}pt · {toMm(stampSize.w).toFixed(1)}mm
+                  </span>
                 </div>
-              </Draggable>
+              </Rnd>
             )}
 
             {footerEnabled && !pdfLoading && pdfReady && canvasSize.w > 0 && (
-              <Draggable
-                nodeRef={footerNodeRef}
+              <Rnd
+                size={{ width: ptToPx(footerSize.w), height: ptToPx(footerSize.h) }}
                 position={footerPos}
-                bounds={footerBounds}
-                disabled={!footerBox.draggable}
-                onStart={() => setFooterDragging(true)}
-                onStop={handleFooterDragStop}
+                bounds="parent"
+                disableDragging={!footerBox.draggable}
+                minWidth={ptToPx(footerLimits.minW)}
+                maxWidth={ptToPx(footerLimits.maxW)}
+                minHeight={ptToPx(footerLimits.minH)}
+                maxHeight={ptToPx(footerLimits.maxH)}
+                onDragStart={() => setFooterDragging(true)}
+                onDragStop={handleFooterDragStop}
+                onResizeStart={() => setFooterDragging(true)}
+                onResizeStop={(_e, _dir, ref, _delta, position) => handleFooterResizeStop(ref, position)}
+                enableResizing={footerBox.draggable && {
+                  topLeft: true, topRight: true, bottomLeft: true, bottomRight: true,
+                }}
+                resizeHandleClasses={{
+                  topLeft:     'dal-handle dal-handle-amber',
+                  topRight:    'dal-handle dal-handle-amber',
+                  bottomLeft:  'dal-handle dal-handle-amber',
+                  bottomRight: 'dal-handle dal-handle-amber',
+                }}
+                className={`select-none transition-opacity ${footerDragging ? 'opacity-70' : 'opacity-90'}`}
               >
                 <div
                   ref={footerNodeRef}
-                  className={`absolute select-none transition-opacity ${footerBox.draggable ? 'cursor-move' : 'cursor-not-allowed'} ${footerDragging ? 'opacity-70' : 'opacity-90'}`}
-                  style={{ width: footerSize.w, height: footerSize.h, top: 0, left: 0 }}
-                  title={footerBox.draggable ? 'Drag untuk pindahkan posisi stamp footer' : 'Posisi stamp footer terkunci (diset di Level 0)'}
+                  className={`w-full h-full relative ${footerBox.draggable ? 'cursor-move' : 'cursor-not-allowed'}`}
+                  title={footerBox.draggable ? 'Geser untuk memindahkan · tarik sudut untuk mengubah ukuran' : 'Posisi stamp footer terkunci (diset di Level 0)'}
                 >
                   <div
                     className="w-full h-full bg-white/85 border-2 border-dashed border-amber-500 rounded px-1.5 py-1 overflow-hidden flex flex-col justify-center gap-0.5"
@@ -513,14 +586,19 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
                       <p
                         key={i}
                         className="leading-tight text-gray-500 truncate"
-                        style={{ fontSize: `${Math.max(4, Math.min(14, footerFontSize))}px` }}
+                        style={{ fontSize: `${ptToPx(footerFontSize)}px` }}
                       >
                         {line}
                       </p>
                     ))}
                   </div>
+                  {footerBox.draggable && (
+                    <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-amber-500 px-1.5 text-[10px] font-medium leading-4 text-white">
+                      {Math.round(footerSize.w)}×{Math.round(footerSize.h)}pt
+                    </span>
+                  )}
                 </div>
-              </Draggable>
+              </Rnd>
             )}
           </div>
         )}

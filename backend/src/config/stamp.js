@@ -52,6 +52,14 @@ const SETTING_DEFAULTS = {
   footer_default_rotation:  '0',
 };
 
+// Kotak footer bukan persegi dan bukan gambar — batasnya beda dari QR, tapi
+// prinsipnya sama: satu tempat, dipakai validator server maupun kontrol di UI.
+const FOOTER_SIZE_LIMIT_PT = {
+  minW: 50, maxW: 400,
+  minH: 15, maxH: 100,
+  minFont: 5, maxFont: 24,
+};
+
 const PT_PER_MM = 72 / 25.4;
 
 const toMm = (pt) => pt * 25.4 / 72;
@@ -59,6 +67,7 @@ const toPt = (mm) => mm * PT_PER_MM;
 
 module.exports = {
   QR_SIZE_LIMIT_PT,
+  FOOTER_SIZE_LIMIT_PT,
   QR_SIZE_ADVISORY_MIN_PT,
   SETTING_DEFAULTS,
   toMm,

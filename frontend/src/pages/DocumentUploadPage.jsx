@@ -347,6 +347,7 @@ export default function DocumentUploadPage() {
               footerBox={footerDefaults ? {
                 enabled:      true,
                 draggable:    true,
+                limits:       settings?.limits?.footer,
                 defaults:     footerDefaults,
                 onChange:     setFooterPosition,
                 previewLines: footerPreviewLines,

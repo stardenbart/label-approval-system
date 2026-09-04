@@ -65,3 +65,24 @@
     background-position: 0% 50%;
   }
 }
+/* ── Pegangan resize kotak stamp (ESignCanvas / react-rnd) ──────────────────
+   react-rnd hanya menyediakan area tangkap tak terlihat; kotak putih kecil di
+   tiap sudut inilah yang memberi tahu bahwa kotaknya memang bisa ditarik. */
+.dal-handle {
+  width: 12px !important;
+  height: 12px !important;
+  background: #ffffff;
+  border: 2px solid #1B3A6F;
+  border-radius: 2px;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.35);
+}
+
+.dal-handle-amber {
+  border-color: #B45309;
+}
+
+/* Sudut kiri-atas dan kanan-bawah punya kursor diagonal bawaan; sisanya
+   diselaraskan agar arah tariknya terbaca jelas. */
+.dal-handle:hover {
+  background: #F1F5F9;
+}

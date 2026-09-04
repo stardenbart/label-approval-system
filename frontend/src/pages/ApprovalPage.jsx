@@ -259,6 +259,7 @@ export default function ApprovalPage() {
                 footerBox={footerDefaults ? {
                   enabled:      true,
                   draggable:    approvalLevel === 0,
+                  limits:       settings?.limits?.footer,
                   defaults:     footerDefaults,
                   onChange:     setFooterPosition,
                   previewLines: footerPreviewLines,

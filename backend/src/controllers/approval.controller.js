@@ -16,7 +16,7 @@ const path   = require('path');
 const Joi    = require('joi')
 const { prisma }    = require('../config/prisma');
 const pdfService    = require('../services/pdf.service');
-const { QR_SIZE_LIMIT_PT } = require('../config/stamp');
+const { QR_SIZE_LIMIT_PT, FOOTER_SIZE_LIMIT_PT } = require('../config/stamp');
 const qrService      = require('../services/qr.service');
 const notifService  = require('../services/notification.service');
 const emailService  = require('../services/email.service');
@@ -40,9 +40,9 @@ const footerPositionSchema = Joi.object({
   pageNumber: Joi.number().integer().min(1).required(),
   xPercent:   Joi.number().min(0).max(100).required(),
   yPercent:   Joi.number().min(0).max(100).required(),
-  widthPt:    Joi.number().min(50).max(400).required(),
-  heightPt:   Joi.number().min(15).max(100).required(),
-  fontSize:   Joi.number().min(5).max(24).default(7),
+  widthPt:    Joi.number().min(FOOTER_SIZE_LIMIT_PT.minW).max(FOOTER_SIZE_LIMIT_PT.maxW).required(),
+  heightPt:   Joi.number().min(FOOTER_SIZE_LIMIT_PT.minH).max(FOOTER_SIZE_LIMIT_PT.maxH).required(),
+  fontSize:   Joi.number().min(FOOTER_SIZE_LIMIT_PT.minFont).max(FOOTER_SIZE_LIMIT_PT.maxFont).default(7),
   rotation:   Joi.number().valid(0, 90, 180, 270).default(0),
 });
 
