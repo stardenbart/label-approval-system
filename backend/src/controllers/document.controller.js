@@ -22,6 +22,7 @@ const logger           = require('../config/logger');
 const { STORAGE_PATH } = require('../middleware/upload');
 const { resolveLevel0Approver } = require('../services/approver-resolution.service');
 const { QR_SIZE_LIMIT_PT, FOOTER_SIZE_LIMIT_PT } = require('../config/stamp');
+const dedupService = require('../services/storage-dedup.service');
 
 const APPROVAL_SELECT = {
   id: true, level: true, status: true,
@@ -306,7 +307,15 @@ exports.upload = async (req, res, next) => {
     const docStorageDir = path.join(STORAGE_PATH, 'documents', docUuid);
     fs.mkdirSync(docStorageDir, { recursive: true });
     const permanentPath = path.join(docStorageDir, 'original.pdf');
-    fs.renameSync(req.file.path, permanentPath);
+
+    // Dedup penyimpanan: label yang sama di-upload berulang saat revisi, dan
+    // tiap upload menyimpan salinan penuhnya sendiri. Kalau isinya persis sama
+    // dengan PDF yang sudah tersimpan, cukup buat hard link — satu salinan
+    // fisik dipakai bersama, sementara tiap dokumen tetap punya path sendiri.
+    // Lihat services/storage-dedup.service.js untuk syarat dan batasannya.
+    const originalSha256 = await dedupService.hashFile(req.file.path);
+    const twinPath       = await dedupService.findTwinPath(prisma, originalSha256);
+    const { deduped }    = dedupService.linkOrMove(req.file.path, permanentPath, twinPath);
 
     const approvalLevel0Uuid = require('crypto').randomUUID();
     // Only used in the superadmin/direct flow — uploader flow does NOT
@@ -324,6 +333,7 @@ exports.upload = async (req, res, next) => {
             labelName:         value.labelName,
             fileNameOriginal:  req.file.originalname,
             pathOriginal:      permanentPath,
+            originalSha256,
             uploadedBy:        req.user.id,
             tanggalTerima:     new Date(value.tanggalTerima),
             tanggalPeriksa:    new Date(value.tanggalPeriksa),
@@ -465,7 +475,7 @@ exports.upload = async (req, res, next) => {
       docName: value.labelName, regulatoryId, approverName: spv.name,
     });
     await auditService.log(req.user.id, 'DOCUMENT_UPLOADED', 'documents', docUuid, req.ip, {
-      regulatoryId, viaUploaderRole: isUploaderRole, targetApproverSource,
+      regulatoryId, viaUploaderRole: isUploaderRole, targetApproverSource, deduped,
     });
 
     res.status(201).json({ success: true, data: { id: docUuid, regulatoryId, labelName: value.labelName } });

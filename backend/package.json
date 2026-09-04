@@ -12,6 +12,7 @@
     "db:seed": "node prisma/seed.js",
     "db:reset": "npx prisma migrate reset --force && node prisma/seed.js",
     "db:studio": "npx prisma studio",
+    "storage:dedupe": "node scripts/dedupe-storage.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

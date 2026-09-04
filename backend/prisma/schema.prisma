@@ -99,6 +99,10 @@ model Document {
   labelName           String    @map("label_name") @db.VarChar(200)
   fileNameOriginal    String    @map("file_name_original") @db.VarChar(255)
   pathOriginal        String    @map("path_original") @db.VarChar(500)
+  // sha256 isi berkas asli. Dipakai untuk dedup penyimpanan: label yang sama
+  // di-upload berulang kali (revisi bolak-balik) menghasilkan berkas identik,
+  // dan salinan kedua dan seterusnya cukup jadi hard link ke yang pertama.
+  originalSha256      String?   @map("original_sha256") @db.Char(64)
   pathSignedLevel0    String?   @map("path_signed_level0") @db.VarChar(500)
   pathSignedLevel1    String?   @map("path_signed_level1") @db.VarChar(500)
   pathSignedFinal     String?   @map("path_signed_final") @db.VarChar(500)
@@ -128,6 +132,7 @@ model Document {
   @@index([tanggalTerima],              name: "idx_doc_terima")
   @@index([tanggalApproval],            name: "idx_doc_approval")
   @@index([regulatoryId],               name: "idx_doc_regulatory")
+  @@index([originalSha256],             name: "idx_doc_sha256")
   @@map("documents")
 }
 
