@@ -70,7 +70,7 @@ async function resolveIsFinalLevel(approval) {
 exports.approve = async (req, res, next) => {
   try {
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId, status: 'PENDING' },
+      where:   { id: req.params.approvalId, status: 'PENDING', document: { deletedAt: null } },
       include: { document: { include: { productCategory: true } }, approver: true },
     });
 
@@ -275,7 +275,7 @@ exports.decline = async (req, res, next) => {
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
 
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId, status: 'PENDING' },
+      where:   { id: req.params.approvalId, status: 'PENDING', document: { deletedAt: null } },
       include: { document: true },
     });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
@@ -317,7 +317,7 @@ exports.decline = async (req, res, next) => {
 exports.suggestedApprovers = async (req, res, next) => {
   try {
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId },
+      where:   { id: req.params.approvalId, document: { deletedAt: null } },
       include: { document: { include: { productCategory: true, footerPosition: true } } },
     });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
@@ -384,7 +384,9 @@ exports.reassign = async (req, res, next) => {
     const { error, value } = Joi.object({ newApproverId: Joi.string().uuid().required() }).validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
 
-    const approval = await prisma.documentApproval.findFirst({ where: { id: req.params.approvalId, status: 'PENDING' } });
+    const approval = await prisma.documentApproval.findFirst({
+      where: { id: req.params.approvalId, status: 'PENDING', document: { deletedAt: null } },
+    });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
 
     const newApprover = await prisma.user.findFirst({ where: { id: value.newApproverId, isActive: true } });
@@ -418,7 +420,7 @@ exports.reassign = async (req, res, next) => {
 exports.downloadQr = async (req, res, next) => {
   try {
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId },
+      where:   { id: req.params.approvalId, document: { deletedAt: null } },
       include: { document: true },
     });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });

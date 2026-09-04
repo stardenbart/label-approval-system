@@ -71,7 +71,7 @@ exports.list = async (req, res, next) => {
 
     if (req.user.role === 'approver') {
       const myPendingDocIds = await prisma.documentApproval.findMany({
-        where:  { approverId: req.user.id, status: 'PENDING' },
+        where:  { approverId: req.user.id, status: 'PENDING', document: { deletedAt: null } },
         select: { documentId: true },
       });
       const pendingIds = myPendingDocIds.map(a => a.documentId);
@@ -154,7 +154,9 @@ exports.list = async (req, res, next) => {
 exports.myPending = async (req, res, next) => {
   try {
     const approvals = await prisma.documentApproval.findMany({
-      where:   { approverId: req.user.id, status: 'PENDING' },
+      // Endpoint lain (list, getOne, checkDocAccess) semuanya menyaring
+      // deletedAt; hanya antrean ini yang tidak.
+      where:   { approverId: req.user.id, status: 'PENDING', document: { deletedAt: null } },
       select: {
         id: true, level: true, status: true, createdAt: true,
         document: {
