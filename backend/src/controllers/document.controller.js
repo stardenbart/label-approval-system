@@ -399,6 +399,14 @@ exports.upload = async (req, res, next) => {
       //    ditempel adalah QR dokumen, penempelan bisa mendahului berkasnya.
       originalQrPromise
         .then(async () => {
+          // QR per level untuk approval Level 0 — tidak ditempel ke PDF, hanya
+          // supaya konfirmasi level ini bisa ditelusuri sendiri dari halaman
+          // detail dokumen. Yang dicetak tetap QR dokumen.
+          const approvalQrPath = await qrService.generateApprovalQr(approvalLevel0Uuid, docStorageDir, 0);
+          await prisma.documentApproval.update({
+            where: { id: approvalLevel0Uuid }, data: { qrPath: approvalQrPath },
+          });
+
           const freshDoc        = await prisma.document.findUnique({ where: { id: docUuid } });
           const level0Approval  = await prisma.documentApproval.findUnique({ where: { id: approvalLevel0Uuid } });
 

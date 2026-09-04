@@ -251,56 +251,40 @@ export default function DocumentDetailPage() {
         <div className="space-y-4">
           <div className="card p-5">
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <QrCode size={16} /> QR Code E-Sign
+              <QrCode size={16} /> QR Code E-Sign per Level
             </h3>
+            <p className="text-xs text-gray-400 -mt-2 mb-3">
+              Satu QR per level untuk menelusuri konfirmasi masing-masing. Tidak dicetak di PDF.
+            </p>
             <div className="space-y-4">
-              {/* Dokumen BARU: satu QR untuk seluruh rantai. Yang ditempel ke PDF
-                  adalah QR dokumen (→ /e/{id}); level 1 dan 2 tidak menempel apa
-                  pun, persetujuan mereka muncul di halaman yang dituju QR itu.
-                  Dokumen LAMA (dibuat sebelum perubahan ini) tetap punya satu QR
-                  per approval, jadi ditampilkan apa adanya di cabang berikutnya. */}
-              {approvalQrs.length === 0 && (
+              {/* QR per level: bukan yang dicetak, tapi jalur untuk menelusuri
+                  konfirmasi tiap level satu per satu. Yang tercetak di PDF hanya
+                  satu QR dokumen — lihat kartu di bawah. */}
+              {/* Dokumen paling lawas (sebelum QR per-approval ada) hanya punya
+                  satu qrPathEsign generik — tampilkan itu, karena itulah yang
+                  tercetak di kertas mereka. */}
+              {approvalQrs.length === 0 && doc.hasQrEsign && (
                 <div className="flex flex-col items-center gap-3">
-                  {/* Dokumen paling lama (sebelum QR per-approval) menempelkan
-                      qrPathEsign; yang tercetak di kertas merekalah yang harus
-                      ditampilkan, bukan QR dokumen. */}
                   <div className="w-36 h-36 bg-gray-100 rounded-lg flex items-center justify-center border">
-                    {(doc.hasQrEsign ? qrEsignUrls.legacy : qrOriginalUrl)
-                      ? <img src={doc.hasQrEsign ? qrEsignUrls.legacy : qrOriginalUrl} alt="QR Code E-Sign" className="w-32 h-32" />
+                    {qrEsignUrls.legacy
+                      ? <img src={qrEsignUrls.legacy} alt="QR E-Sign" className="w-32 h-32" />
                       : <QrCode size={40} className="text-gray-300" />
                     }
                   </div>
-                  <p className="text-[11px] text-center text-gray-500 leading-snug">
-                    Satu QR untuk seluruh rantai approval.<br />Pindai untuk melihat siapa menyetujui di tiap level.
-                  </p>
-                  <div className="w-full space-y-1">
-                    {(doc.approvals || []).map((a) => (
-                      <div key={a.id} className="flex items-center justify-between gap-2 text-[11px]">
-                        <span className="text-gray-500">Level {a.level}</span>
-                        <span className={`truncate ${a.status === 'APPROVED' ? 'text-gray-700' : 'text-gray-400'}`}>
-                          {a.approver?.name || '—'}
-                        </span>
-                        <span className={`shrink-0 font-medium ${
-                          a.status === 'APPROVED' ? 'text-green-600'
-                          : a.status === 'DECLINED' ? 'text-red-500' : 'text-amber-600'
-                        }`}>
-                          {a.status === 'APPROVED' ? 'disetujui' : a.status === 'DECLINED' ? 'ditolak' : 'menunggu'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                  {(doc.hasQrEsign || doc.hasQrOriginal) && (
-                    <button
-                      onClick={() => downloadFile(
-                        doc.hasQrEsign ? `/documents/${id}/qr/esign` : `/documents/${id}/qr/original`,
-                        `qr_esign_${doc.regulatoryId}.png`,
-                      )}
-                      className="btn-secondary text-xs py-1.5"
-                    >
-                      <Download size={12} /> Download QR
-                    </button>
-                  )}
+                  <p className="text-[11px] text-gray-400">Dokumen lama — QR e-sign tunggal</p>
+                  <button
+                    onClick={() => downloadFile(`/documents/${id}/qr/esign`, `qr_esign_${doc.regulatoryId}.png`)}
+                    className="btn-secondary text-xs py-1.5"
+                  >
+                    <Download size={12} /> Download QR
+                  </button>
                 </div>
+              )}
+
+              {approvalQrs.length === 0 && !doc.hasQrEsign && (
+                <p className="text-xs text-gray-400 text-center py-6">
+                  Belum ada level yang dikonfirmasi.
+                </p>
               )}
 
               {approvalQrs.length > 0 && approvalQrs.map((qr) => (
@@ -329,14 +313,13 @@ export default function DocumentDetailPage() {
             </div>
           </div>
 
-          {/* Untuk dokumen baru, QR Original DAN QR E-Sign adalah berkas yang sama —
-              menampilkannya dua kali dengan dua nama hanya membingungkan. Kartu ini
-              tinggal untuk dokumen lama, yang QR e-sign-nya memang terpisah. */}
-          {approvalQrs.length > 0 && (
           <div className="card p-5">
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <QrCode size={16} /> QR Code Original
+              <QrCode size={16} /> QR Code Dokumen
             </h3>
+            <p className="text-xs text-gray-400 -mt-2 mb-3">
+              Satu-satunya QR yang tercetak di PDF. Halaman yang dituju menampilkan seluruh rantai approval.
+            </p>
             <div className="flex flex-col items-center gap-3">
               <div className="w-36 h-36 bg-gray-100 rounded-lg flex items-center justify-center border">
                 {qrOriginalUrl
@@ -354,7 +337,6 @@ export default function DocumentDetailPage() {
               )}
             </div>
           </div>
-          )}
         </div>
       </div>
     </div>

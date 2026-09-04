@@ -119,15 +119,30 @@ exports.approve = async (req, res, next) => {
       if (!nextApprover) return res.status(400).json({ success: false, message: 'Invalid next approver' });
     }
 
-    // ── Penempelan hanya terjadi di Level 0 ─────────────────────────────
-    // Satu QR per dokumen (document.qrPathOriginal → /e/{docUuid}), ditempel
-    // sekali oleh Staff Regulatory bersama footer stamp. Level 1 dan 2 tidak
-    // menggambar apa pun: persetujuan mereka tercatat di database dan langsung
-    // terlihat di halaman publik yang dituju QR itu. Dulu tiap level menempel
-    // QR sendiri, sehingga satu label bisa membawa tiga QR yang masing-masing
-    // hanya mewakili satu approver.
+    // ── Dua hal yang berbeda, jangan tertukar ───────────────────────────
+    //
+    // 1. QR YANG DICETAK — satu saja per dokumen (document.qrPathOriginal →
+    //    /e/{docUuid}), ditempel sekali oleh Level 0 bersama footer stamp.
+    //    Level 1 dan 2 tidak menggambar apa pun ke PDF.
+    //
+    // 2. QR PER LEVEL — tiap approval tetap punya QR sendiri
+    //    (/e/approval/{approvalId}) yang menampilkan konfirmasi level itu saja.
+    //    Ini TIDAK ditempel ke PDF; gunanya untuk ditelusuri per level dari
+    //    halaman detail dokumen.
+    //
+    // Sebelumnya keduanya digabung: QR per level ikut dicetak, sehingga satu
+    // label memuat tiga QR.
     const isLevel0 = approval.level === 0;
     const position = value.position || null;
+
+    const docStorageDir = path.dirname(approval.document.pathOriginal);
+    let approvalQrPath = null;
+    try {
+      approvalQrPath = await qrService.generateApprovalQr(approval.id, docStorageDir, approval.level);
+    } catch (qrErr) {
+      logger.error('Approval QR generation failed:', qrErr);
+      return res.status(500).json({ success: false, message: 'Failed to generate approval QR', code: 'QR_ERROR' });
+    }
 
     if (position && !isLevel0) {
       return res.status(400).json({
@@ -158,7 +173,7 @@ exports.approve = async (req, res, next) => {
             notes:          value.notes,
             nextApproverId: value.nextApproverId || null,
             pathSigned:     signedPath,
-            // qrPath already persisted above
+            qrPath:         approvalQrPath,
           },
         });
 
