@@ -4,7 +4,6 @@
 const Joi    = require('joi');
 const { prisma }     = require('../config/prisma');
 const importExport   = require('../services/product-import-export.service');
-const logger         = require('../config/logger');
 
 // ─── Groups ───────────────────────────────────────────────────────
 exports.listGroups = async (req, res, next) => {

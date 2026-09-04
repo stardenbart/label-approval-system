@@ -49,7 +49,6 @@ const logger     = require('../config/logger');
 const FOOTER_FONT_SIZE  = 7;
 const FOOTER_COLOR      = rgb(0.55, 0.55, 0.55); // gray
 const FOOTER_MARGIN_PT  = 18; // legacy fallback margin, used only if no position/default is resolvable
-const FOOTER_LINE_GAP   = 9;
 
 function truncate(str, max) {
   if (!str) return '';
@@ -262,7 +261,7 @@ function resolveOutputFilename(level) {
  *                                 header "Signing level chain").
  * @returns {string} absolute path to the newly written signed PDF
  */
-async function overlayEsign(document, approval, position, isFinalLevel = false, footerPosition = null) {
+async function overlayEsign(document, approval, position, _isFinalLevel = false, footerPosition = null) {
   const settings = await getSettings();
 
   const pos = position

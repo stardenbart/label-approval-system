@@ -118,7 +118,7 @@ async function main() {
   if (superadminUser) {
     // Group-default rows (productCategoryId null) have no DB unique constraint to upsert
     // against — see schema.prisma note on ProductApproverMapping — so find-then-create.
-    async function upsertGroupDefault(groupId, level) {
+    const upsertGroupDefault = async (groupId, level) => {
       const existing = await prisma.productApproverMapping.findFirst({
         where: { productGroupId: groupId, level, productCategoryId: null },
       });
@@ -126,7 +126,7 @@ async function main() {
       await prisma.productApproverMapping.create({
         data: { productGroupId: groupId, approverUserId: superadminUser.id, level },
       });
-    }
+    };
 
     const allGroups = await prisma.productGroup.findMany();
     for (const grp of allGroups) {

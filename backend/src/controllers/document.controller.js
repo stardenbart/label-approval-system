@@ -309,9 +309,8 @@ exports.upload = async (req, res, next) => {
     // level 0, via the existing generic approval.controller.js#approve().
     const approvalLevel1Uuid = require('crypto').randomUUID();
 
-    let doc;
     try {
-      doc = await prisma.$transaction(async (tx) => {
+      await prisma.$transaction(async (tx) => {
         const created = await tx.document.create({
           data: {
             id:                docUuid,

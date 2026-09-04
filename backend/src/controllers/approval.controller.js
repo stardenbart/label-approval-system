@@ -21,7 +21,6 @@ const notifService  = require('../services/notification.service');
 const emailService  = require('../services/email.service');
 const auditService  = require('../services/audit.service');
 const logger        = require('../config/logger');
-const { STORAGE_PATH } = require('../middleware/upload');
 
 const positionSchema = Joi.object({
   pageNumber: Joi.number().integer().min(1).required(),
