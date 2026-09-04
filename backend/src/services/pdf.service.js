@@ -206,12 +206,34 @@ function resolveSourcePath(document, level) {
 }
 
 /**
+ * The signing chain writes one named output file per level, and Document has one
+ * column per level (pathSignedLevel0 / pathSignedLevel1 / pathSignedFinal). That
+ * makes the number of supported approval levels a property of THIS module — so it
+ * is declared here once and everything else derives its ceiling from
+ * MAX_APPROVAL_LEVEL instead of hardcoding 2 again:
+ *   • approval.controller.js#resolveIsFinalLevel — treats the top level as final
+ *   • user.controller.js#setMapping             — refuses mappings above it
+ *
+ * To support a 4th level, all of these must change together:
+ *   1. LEVEL_OUTPUT below
+ *   2. resolveSourcePath() above
+ *   3. the pathSignedLevel* columns in schema.prisma, plus the `levelField`
+ *      write in approval.controller.js#approve
+ */
+const LEVEL_OUTPUT = {
+  0: 'signed_level0.pdf',
+  1: 'signed_level1.pdf',
+  2: 'signed_final.pdf',
+};
+
+const MAX_APPROVAL_LEVEL = Math.max(...Object.keys(LEVEL_OUTPUT).map(Number));
+
+/**
  * Resolve output filename based on signing level.
  */
 function resolveOutputFilename(level) {
-  const map = { 0: 'signed_level0.pdf', 1: 'signed_level1.pdf', 2: 'signed_final.pdf' };
-  if (!(level in map)) throw new Error(`Unsupported approval level: ${level}`);
-  return map[level];
+  if (!(level in LEVEL_OUTPUT)) throw new Error(`Unsupported approval level: ${level}`);
+  return LEVEL_OUTPUT[level];
 }
 
 /**
@@ -319,4 +341,4 @@ async function overlayEsign(document, approval, position, isFinalLevel = false, 
   return outPath;
 }
 
-module.exports = { overlayEsign, getSettings };
+module.exports = { overlayEsign, getSettings, MAX_APPROVAL_LEVEL };

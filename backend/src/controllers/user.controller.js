@@ -9,6 +9,13 @@ const auditService      = require('../services/audit.service');
 const emailService      = require('../services/email.service');
 const notifService      = require('../services/notification.service');
 const { resolveLevel0Approver } = require('../services/approver-resolution.service');
+const { MAX_APPROVAL_LEVEL }    = require('../services/pdf.service');
+
+// Single source of truth for the UserRole enum in schema.prisma. Kept in one
+// place because create() and update() previously drifted: 'uploader' was valid
+// on create but missing on update, so an uploader could be created and then
+// never edited again.
+const USER_ROLES = ['superadmin', 'admin', 'approver', 'viewer', 'uploader'];
 
 exports.list = async (req, res, next) => {
   try {
@@ -37,7 +44,7 @@ exports.create = async (req, res, next) => {
     const schema = Joi.object({
       name:     Joi.string().max(100).required(),
       email:    Joi.string().email().required(),
-      role:     Joi.string().valid('superadmin','admin','approver','viewer', 'uploader').required(),
+      role:     Joi.string().valid(...USER_ROLES).required(),
       password: Joi.string().min(8).required(),
     });
     const { error, value } = schema.validate(req.body);
@@ -61,7 +68,7 @@ exports.update = async (req, res, next) => {
   try {
     const schema = Joi.object({
       name:     Joi.string().max(100),
-      role:     Joi.string().valid('superadmin','admin','approver','viewer'),
+      role:     Joi.string().valid(...USER_ROLES),
       isActive: Joi.boolean(),
     });
     const { error, value } = schema.validate(req.body);
@@ -150,7 +157,9 @@ exports.setMapping = async (req, res, next) => {
       productGroupId:    Joi.number().integer().required(),
       productCategoryId: Joi.number().integer().optional().allow(null),
       approverUserId:    Joi.string().uuid().required(),
-      level:             Joi.number().integer().min(0).max(2).default(2),
+      // Ceiling comes from pdf.service — it can only sign levels 0..MAX_APPROVAL_LEVEL.
+      // A mapping above it would create an approval nobody can ever sign.
+      level:             Joi.number().integer().min(0).max(MAX_APPROVAL_LEVEL).default(MAX_APPROVAL_LEVEL),
     }).validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
 
