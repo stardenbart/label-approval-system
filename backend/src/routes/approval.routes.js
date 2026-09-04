@@ -20,6 +20,8 @@ router.get('/:approvalId/suggested-approvers', apiLimiter, ctrl.suggestedApprove
 
 // Download this approval's own QR (authenticated) — the QR that was stamped
 // onto the PDF and that points to /e/approval/:approvalId publicly.
+// ?preview=true renders the same QR in memory when the stamped file does not
+// exist yet, so the approval screen can show the real stamp before approving.
 router.get('/:approvalId/qr', apiLimiter, ctrl.downloadQr);
 
 // Superadmin reassign

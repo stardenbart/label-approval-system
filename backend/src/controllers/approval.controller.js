@@ -422,16 +422,38 @@ exports.downloadQr = async (req, res, next) => {
       }
     }
 
-    if (!approval.qrPath || !require('fs').existsSync(approval.qrPath)) {
+    // ?preview=true — the approval screen asking "what will my stamp look like?".
+    // The stamped file only appears once approve() runs (generateApprovalQr →
+    // overlayEsign), so a PENDING approval has nothing on disk; render the same
+    // QR in memory instead of 404-ing. Without the flag the behaviour is
+    // unchanged: this endpoint hands back the actual stamped artifact, or 404.
+    const wantsPreview = req.query.preview === 'true';
+    const hasStampedQr = !!approval.qrPath && fs.existsSync(approval.qrPath);
+
+    if (!hasStampedQr && !wantsPreview) {
       return res.status(404).json({ success: false, message: 'QR not ready yet for this approval.' });
     }
 
-    await auditService.log(req.user.id, 'APPROVAL_QR_DOWNLOADED', 'document_approvals', approval.id, req.ip);
-    res.setHeader('Content-Type',        'image/png');
-    res.setHeader('Content-Disposition', `attachment; filename="qr_level${approval.level}_${doc.regulatoryId}.png"`);
-    res.setHeader('Cache-Control',       'no-store, no-cache, must-revalidate');
-    res.setHeader('Pragma',              'no-cache');
-    res.setHeader('Expires',            '0');
-    res.sendFile(require('path').resolve(approval.qrPath));
+    res.setHeader('Content-Type',  'image/png');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma',        'no-cache');
+    res.setHeader('Expires',      '0');
+
+    if (!hasStampedQr) {
+      // Deliberately not audit-logged: this fires on every render of the approval
+      // page and is not a download of a signed artifact.
+      const png = await qrService.renderApprovalQr(approval.id);
+      res.setHeader('Content-Disposition', `inline; filename="qr_preview_level${approval.level}.png"`);
+      return res.send(png);
+    }
+
+    if (!wantsPreview) {
+      await auditService.log(req.user.id, 'APPROVAL_QR_DOWNLOADED', 'document_approvals', approval.id, req.ip);
+    }
+    res.setHeader(
+      'Content-Disposition',
+      `${wantsPreview ? 'inline' : 'attachment'}; filename="qr_level${approval.level}_${doc.regulatoryId}.png"`
+    );
+    res.sendFile(path.resolve(approval.qrPath));
   } catch (err) { next(err); }
 };

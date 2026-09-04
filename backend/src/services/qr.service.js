@@ -27,6 +27,18 @@ async function generateOriginalQr(docUuid, storageDir) {
 }
 
 /**
+ * The public verification target for one approval — the URL encoded in that
+ * approval's QR. Both the stamped file (generateApprovalQr) and the pre-approval
+ * preview (renderApprovalQr) go through here on purpose: keeping the URL and
+ * QR_OPTS in one place is what guarantees the QR an approver previews is exactly
+ * the QR that ends up printed on the PDF.
+ */
+function approvalQrUrl(approvalId) {
+  const baseUrl = process.env.APP_URL || 'https://localhost';
+  return `${baseUrl}/e/approval/${approvalId}`;
+}
+
+/**
  * Generate the QR for a SPECIFIC approval (one per level: 0=Staff, 1=SPV, 2=Marketing...).
  * Target: /e/approval/{approvalId} — shows that specific approver's identity + document info.
  * This is the SAME image file used both as:
@@ -41,12 +53,25 @@ async function generateOriginalQr(docUuid, storageDir) {
  * @returns {string} absolute path to the generated QR PNG
  */
 async function generateApprovalQr(approvalId, storageDir, level) {
-  const baseUrl = process.env.APP_URL || 'https://localhost';
-  const qrUrl   = `${baseUrl}/e/approval/${approvalId}`;
-  const qrPath  = path.join(storageDir, `qr_approval_level${level}.png`);
+  const qrPath = path.join(storageDir, `qr_approval_level${level}.png`);
 
-  await QRCode.toFile(qrPath, qrUrl, QR_OPTS);
+  await QRCode.toFile(qrPath, approvalQrUrl(approvalId), QR_OPTS);
   return qrPath;
+}
+
+/**
+ * The same QR as generateApprovalQr(), rendered to a PNG buffer instead of a file.
+ *
+ * Needed because the stamped file does not exist until approve() runs — the
+ * approver reviewing a PENDING approval has nothing on disk to look at yet. This
+ * renders the identical image in memory so the drag-and-drop canvas can show the
+ * real stamp instead of an empty placeholder. Writes nothing, changes nothing.
+ *
+ * @param {string} approvalId - DocumentApproval.id
+ * @returns {Promise<Buffer>} PNG bytes
+ */
+async function renderApprovalQr(approvalId) {
+  return QRCode.toBuffer(approvalQrUrl(approvalId), QR_OPTS);
 }
 
 /**
@@ -71,8 +96,10 @@ async function toDataURL(content) {
 }
 
 module.exports = {
+  approvalQrUrl,
   generateOriginalQr,
   generateApprovalQr,
+  renderApprovalQr,
   generateForDocument, // deprecated — see notice above
   toDataURL,
 };

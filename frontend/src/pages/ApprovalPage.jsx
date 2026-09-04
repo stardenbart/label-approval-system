@@ -46,29 +46,36 @@ export default function ApprovalPage() {
   }, [approvalData]);
 
   // ── Pre-fetch QR stamp sebagai blob URL ────────────────────────
-  // QR adalah image PNG statis — aman di-prefetch di parent.
+  // QR bersifat per-approval, bukan per-dokumen (FIX-06) — jadi sumbernya
+  // approvalId, bukan documentId. Endpoint lama /documents/:id/qr/esign membaca
+  // document.qrPathEsign yang sudah tidak pernah diisi lagi sejak FIX-06, jadi
+  // selalu 404 dan stamp selamanya tampil kosong.
+  //
+  // ?preview=true karena berkas QR baru ditulis saat approve(); untuk approval
+  // yang masih PENDING server merender QR yang sama di memori.
+  //
   // PDF TIDAK di-prefetch di sini — ESignCanvas handle sendiri via
   // axios interceptor (auth header + auto-refresh). Lihat ESignCanvas FIX-01.
   useEffect(() => {
-    if (!documentId) return;
+    if (!approvalId) return;
     let blobUrl = null;
     let cancelled = false;
 
-    api.get(`/documents/${documentId}/qr/esign`, { responseType: 'blob' })
+    api.get(`/approvals/${approvalId}/qr`, { params: { preview: true }, responseType: 'blob' })
       .then(res => {
         if (cancelled) return;
         blobUrl = URL.createObjectURL(res.data);
         setQrDataUrl(blobUrl);
       })
       .catch(() => {
-        // QR mungkin belum selesai digenerate — tidak fatal, stamp tampil kosong
+        // Tidak fatal — ESignCanvas jatuh ke placeholder kotak putus-putus
       });
 
     return () => {
       cancelled = true;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [documentId]);
+  }, [approvalId]);
 
   // ── Approver list ──────────────────────────────────────────────
   const suggested = approvalData?.suggested || [];
