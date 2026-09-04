@@ -42,14 +42,20 @@ const footerPositionSchema = Joi.object({
 });
 
 // ─── Helper: determine if an approval is at the final level ──────────────────
+// Ceiling first, mapping data second. pdf.service can only read/write levels
+// 0..MAX_APPROVAL_LEVEL, so the top level is always final regardless of what the
+// mapping table says. Without this, a stray level+1 mapping row — only reachable
+// by a direct DB insert, since setMapping refuses it — would spawn an approval
+// that overlayEsign can never sign ("Unsupported approval level"), leaving the
+// document stuck with no way to finish it.
 async function resolveIsFinalLevel(approval) {
-  const groupId   = approval.document?.productCategory?.groupId;
-  const nextLevel = approval.level + 1;
+  if (approval.level >= pdfService.MAX_APPROVAL_LEVEL) return true;
 
-  if (!groupId) return approval.level >= 2;
+  const groupId = approval.document?.productCategory?.groupId;
+  if (!groupId) return false;
 
   const nextMapping = await prisma.productApproverMapping.findFirst({
-    where: { productGroupId: groupId, level: nextLevel },
+    where: { productGroupId: groupId, level: approval.level + 1 },
   });
 
   return !nextMapping;
@@ -307,10 +313,9 @@ exports.suggestedApprovers = async (req, res, next) => {
     const groupId   = approval.document.productCategory.groupId;
     const nextLevel = approval.level + 1;
 
-    const nextMapping = await prisma.productApproverMapping.findFirst({
-      where: { productGroupId: groupId, level: nextLevel },
-    });
-    const isFinalLevel = !nextMapping;
+    // Same helper approve() uses — the UI must not offer a "next approver" for a
+    // level that approve() will then treat as final (FIX-05a).
+    const isFinalLevel = await resolveIsFinalLevel(approval);
 
     const mappings = await prisma.productApproverMapping.findMany({
       where:   { productGroupId: groupId, level: nextLevel },
