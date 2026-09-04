@@ -5,8 +5,13 @@ const { prisma } = require('../config/prisma');
 
 exports.list = async (req, res, next) => {
   try {
-    const { page=1, limit=50, action, entity, userId, dateFrom, dateTo } = req.query;
-    const skip  = (parseInt(page)-1) * parseInt(limit);
+    // MED-08 / HIGH-03: clamp before use — an unclamped page=0 produces a negative
+    // skip (Prisma throws → 500) and an unclamped limit lets ?limit=1000000 pull the
+    // whole audit table in one request. Same pattern as document.controller.js#list.
+    const { action, entity, userId, dateFrom, dateTo } = req.query;
+    const page  = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+    const skip  = (page - 1) * limit;
     const where = {};
 
     if (action)   where.action   = { contains: action };
@@ -22,7 +27,7 @@ exports.list = async (req, res, next) => {
       prisma.auditLog.findMany({
         where,
         skip,
-        take: parseInt(limit),
+        take: limit,
         orderBy: { createdAt: 'desc' },
         include: { user: { select: { id:true, name:true, email:true } } },
       }),
@@ -31,7 +36,7 @@ exports.list = async (req, res, next) => {
 
     res.json({
       success: true,
-      data: { items, pagination: { page: parseInt(page), limit: parseInt(limit), total } },
+      data: { items, pagination: { page, limit, total, pages: Math.ceil(total / limit) } },
     });
   } catch (err) { next(err); }
 };
