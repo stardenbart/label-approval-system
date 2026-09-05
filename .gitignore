@@ -1,0 +1,75 @@
+# Root .gitignore — DAL System (Digital Approval Label)
+
+# Dokumen handover internal: memuat kredensial server dan catatan operasional.
+ONBOARDING.md
+
+# Backup: berisi data nyata — hash password, refresh token, isi dokumen.
+# Jangan pernah masuk ke repo, seberapa pun kecilnya.
+backups/
+*.sql
+*.sql.gz
+dal_storage_*.tar.gz
+
+# Catatan akun uji dan sejenisnya
+text
+
+# Storage runtime (cache boleh dihapus kapan saja, isinya bisa dibuat ulang)
+backend/storage/
+backend/.gsbench-out/
+backend/.ctest/
+# Environment files must never be committed. Keep sanitized examples only.
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Temporary office files
+~$*
+
+# Python & Report temp files
+search_latency_report.json
+frontend_search_latency_report.json
+
+# IDEs and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Backend specific
+backend/.env
+backend/*.local.env
+backend/bin/
+backend/dist/
+backend/uploads/
+backend/logs/
+backend/*.log
+backend/vendor/
+backend/docs/swagger/docs.go
+backend/docs/swagger/swagger.json
+backend/docs/swagger/swagger.yaml
+backend/main
+backend/server
+backend/tmp_server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Frontend specific (for future use)
+node_modules/
+dist/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*

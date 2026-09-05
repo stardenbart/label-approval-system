@@ -12,6 +12,7 @@
     "db:seed": "node prisma/seed.js",
     "db:reset": "npx prisma migrate reset --force && node prisma/seed.js",
     "db:studio": "npx prisma studio",
+    "storage:doctor": "node scripts/storage-doctor.js",
     "storage:dedupe": "node scripts/dedupe-storage.js",
     "storage:manifest": "node scripts/backfill-stamp-manifest.js",
     "storage:compress": "node scripts/compress-archives.js",
