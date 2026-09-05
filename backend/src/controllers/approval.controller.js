@@ -151,15 +151,50 @@ exports.approve = async (req, res, next) => {
       });
     }
 
-    let signedPath = null;
+    // ── Level 0 membekukan keputusan, bukan menulis berkas ──────────────
+    //
+    // Yang disimpan adalah manifest: posisi QR, posisi & isi footer, berkas QR
+    // yang dipakai, sha256 sumbernya. Berkas hasil penempelannya dulu ditulis
+    // di sini dan disimpan selamanya, padahal isinya salinan utuh original.pdf
+    // yang bedanya cuma beberapa KB — 50% dari seluruh storage habis untuk itu.
+    // Sekarang berkasnya dirender saat diminta (~25 ms) dan hanya diarsipkan
+    // permanen ketika approval final tercapai.
+    let manifest = null;
     if (isLevel0) {
       try {
-        signedPath = await pdfService.overlayEsign(
-          approval.document, approval, position, value.footerPosition || null,
+        manifest = await pdfService.resolveStampManifest(
+          approval.document, position, value.footerPosition || null, req.user.id,
         );
       } catch (pdfErr) {
-        logger.error('PDF overlay failed:', pdfErr);
+        logger.error('Stamp manifest resolution failed:', pdfErr);
         return res.status(500).json({ success: false, message: 'Failed to process PDF signature', code: 'PDF_ERROR' });
+      }
+    }
+
+    // ── Approval final menulis SATU arsip permanen ──────────────────────
+    //
+    // Inilah berkas yang harus bisa ditunjukkan bertahun-tahun kemudian dalam
+    // bentuk yang persis sama, jadi ia disimpan sungguhan — bukan dirender ulang
+    // setiap kali diminta.
+    let archivePath  = null;
+    let wroteArchive = false;
+    if (isFinalLevel) {
+      const effectiveManifest = manifest || approval.document.stampManifest;
+      try {
+        if (effectiveManifest) {
+          archivePath = await pdfService.writeFinalArchive(
+            { ...approval.document, stampManifest: effectiveManifest }, effectiveManifest,
+          );
+          wroteArchive = true;
+        } else {
+          // Dokumen lama, di-stamp sebelum manifest ada: berkas turunannya sudah
+          // di disk dan itulah arsipnya. Jangan dirender ulang — hasil render
+          // hari ini belum tentu sama dengan yang dulu benar-benar dicetak.
+          archivePath = approval.document.pathSignedLevel0;
+        }
+      } catch (pdfErr) {
+        logger.error('Final archive write failed:', pdfErr);
+        return res.status(500).json({ success: false, message: 'Failed to write final signed PDF', code: 'PDF_ERROR' });
       }
     }
 
@@ -172,7 +207,9 @@ exports.approve = async (req, res, next) => {
             signedAt:       new Date(),
             notes:          value.notes,
             nextApproverId: value.nextApproverId || null,
-            pathSigned:     signedPath,
+            // Hanya approval yang benar-benar menghasilkan berkas yang mengisi
+            // ini. Level 0 tidak lagi menulis apa pun, jadi nilainya null.
+            pathSigned:     archivePath,
             qrPath:         approvalQrPath,
           },
         });
@@ -210,19 +247,18 @@ exports.approve = async (req, res, next) => {
           });
         }
 
-        // Hanya ada SATU berkas hasil penempelan, ditulis di Level 0. Level
-        // berikutnya tidak menghasilkan berkas baru, jadi tidak ada rantai
-        // pathSignedLevel1 → pathSignedFinal lagi: semuanya menunjuk berkas yang
-        // sama. Nama kolom dipertahankan supaya dokumen lama tetap terbaca.
-        const stampedPath = signedPath || approval.document.pathSignedLevel0;
-
+        // Hanya ada SATU berkas hasil penempelan, dan ia baru ditulis saat
+        // approval final. Nama kolom pathSignedLevel0/pathSignedFinal
+        // dipertahankan supaya dokumen lama tetap terbaca; untuk dokumen baru
+        // keduanya menunjuk berkas arsip yang sama.
         if (isFinalLevel) {
           const documentUpdateData = {
             status:          'APPROVED',
-            pathSignedFinal: stampedPath,
+            pathSignedFinal: archivePath,
+            pathSignedLevel0: archivePath,
             tanggalApproval: new Date(),
           };
-          if (isLevel0) documentUpdateData.pathSignedLevel0 = signedPath;
+          if (manifest) documentUpdateData.stampManifest = manifest;
           if (approval.level === 1) documentUpdateData.tanggalVerifikasi = new Date();
 
           await tx.document.update({
@@ -231,7 +267,7 @@ exports.approve = async (req, res, next) => {
           });
         } else {
           const documentUpdateData = {};
-          if (isLevel0) documentUpdateData.pathSignedLevel0 = signedPath;
+          if (manifest) documentUpdateData.stampManifest = manifest;
           if (approval.level === 1) documentUpdateData.tanggalVerifikasi = new Date();
 
           if (Object.keys(documentUpdateData).length > 0) {
@@ -252,8 +288,11 @@ exports.approve = async (req, res, next) => {
         }
       });
     } catch (txErr) {
-      if (signedPath && fs.existsSync(signedPath)) {
-        try { fs.unlinkSync(signedPath); } catch (_) {}
+      // Hanya buang berkas yang transaksi ini sendiri tulis. Kalau archivePath
+      // menunjuk berkas turunan lama milik dokumen legacy, menghapusnya berarti
+      // menghancurkan arsip yang sah.
+      if (wroteArchive && archivePath && fs.existsSync(archivePath)) {
+        try { fs.unlinkSync(archivePath); } catch (_) {}
       }
       throw txErr;
     }
@@ -466,10 +505,10 @@ exports.downloadQr = async (req, res, next) => {
     }
 
     // ?preview=true — the approval screen asking "what will my stamp look like?".
-    // The stamped file only appears once approve() runs (generateApprovalQr →
-    // overlayEsign), so a PENDING approval has nothing on disk; render the same
-    // QR in memory instead of 404-ing. Without the flag the behaviour is
-    // unchanged: this endpoint hands back the actual stamped artifact, or 404.
+    // approval.qrPath only appears once approve() runs (generateApprovalQr), so
+    // a PENDING approval has nothing on disk; render the same QR in memory
+    // instead of 404-ing. Without the flag the behaviour is unchanged: this
+    // endpoint hands back the actual stored QR, or 404.
     const wantsPreview = req.query.preview === 'true';
     const hasStampedQr = !!approval.qrPath && fs.existsSync(approval.qrPath);
 

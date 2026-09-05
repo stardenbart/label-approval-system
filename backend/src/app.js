@@ -8,6 +8,7 @@ const helmet   = require('helmet');
 const morgan   = require('morgan');
 const cookieParser = require('cookie-parser');
 const cron     = require('node-cron');
+const stampedCache = require('./services/stamped-cache.service');
 const { randomUUID } = require('crypto');
 
 const logger         = require('./config/logger');
@@ -97,6 +98,19 @@ cron.schedule('0 3 * * *', async () => {
     logger.info(`[CRON] Cleaned ${count} expired/revoked refresh tokens`);
   } catch (err) {
     logger.error('[CRON] Refresh token cleanup error:', err);
+  }
+});
+
+// ─── Cron: buang cache PDF hasil penempelan yang sudah tua ────────
+// Isinya bisa dibuat ulang kapan saja dari original.pdf + stamp manifest
+// (~25 ms), jadi membuangnya tidak pernah menghilangkan data — hanya
+// menahan agar foldernya tidak tumbuh tanpa batas.
+cron.schedule('30 3 * * *', () => {
+  try {
+    const { removed, bytesFreed } = stampedCache.evict();
+    if (removed) logger.info(`[CRON] Cache stamped: ${removed} berkas dibuang, ${(bytesFreed / 1048576).toFixed(1)} MB`);
+  } catch (err) {
+    logger.error('[CRON] Stamped cache eviction error:', err);
   }
 });
 

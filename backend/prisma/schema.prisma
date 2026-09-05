@@ -107,6 +107,12 @@ model Document {
   pathSignedLevel1    String?   @map("path_signed_level1") @db.VarChar(500)
   pathSignedFinal     String?   @map("path_signed_final") @db.VarChar(500)
   pathCheckReport     String?   @map("path_check_report") @db.VarChar(500)
+  // Apa PERSIS yang digambar ke PDF saat Level 0 menyetujui: posisi QR, posisi
+  // dan isi footer, berkas QR yang dipakai, sha256 sumbernya. Dibekukan pada
+  // saat itu supaya berkas hasil penempelan bisa dibuat ulang identik kapan pun
+  // — termasuk setelah default di System Settings diubah atau nama label diedit.
+  // Lihat pdf.service.js: resolveStampManifest() / renderStamped().
+  stampManifest       Json?     @map("stamp_manifest")
   status              DocumentStatus @default(PENDING_APPROVAL)
   uploadedBy          String    @map("uploaded_by") @db.VarChar(36)
   tanggalTerima       DateTime  @map("tanggal_terima") @db.Date

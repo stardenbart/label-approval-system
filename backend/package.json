@@ -13,6 +13,7 @@
     "db:reset": "npx prisma migrate reset --force && node prisma/seed.js",
     "db:studio": "npx prisma studio",
     "storage:dedupe": "node scripts/dedupe-storage.js",
+    "storage:manifest": "node scripts/backfill-stamp-manifest.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

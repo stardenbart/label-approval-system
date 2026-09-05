@@ -15,8 +15,9 @@
  *               (flip Y because PDF origin is bottom-left)
  *
  * Satu QR per dokumen — bukan satu per level:
- *   Level 0 (Staff)  membaca pathOriginal, menempel QR dokumen + footer stamp,
- *                    menulis satu berkas: pathSignedLevel0.
+ *   Level 0 (Staff)  menentukan posisi QR dokumen + footer stamp dan MEMBEKUKAN
+ *                    keputusannya ke document.stampManifest. Tidak ada berkas
+ *                    yang ditulis di sini.
  *   Level 1 & 2      tidak menggambar apa pun dan tidak menulis berkas baru.
  *                    Persetujuan mereka tercatat di database dan langsung
  *                    terlihat di halaman publik yang dituju QR itu.
@@ -28,11 +29,28 @@
  *
  *   Dokumen lama tetap punya approval.qrPath dan halaman /e/approval/:id-nya
  *   tetap dilayani — label yang sudah tercetak masih dipindai orang.
+ *
+ * Berkas hasil penempelan tidak lagi disimpan per level:
+ *
+ *   Diukur pada storage nyata, `signed_level0.pdf` adalah salinan UTUH
+ *   `original.pdf` yang bedanya cuma 0,1–6,2 KB (QR + tiga baris teks), tapi
+ *   memakan tempat sebesar aslinya. Berkas turunan seperti itu mengambil 50%
+ *   dari seluruh storage. Merendernya ulang cuma perlu ~25 ms — lebih cepat
+ *   daripada mengirimkannya lewat jaringan.
+ *
+ *   Karena itu alurnya sekarang:
+ *     resolveStampManifest()  -> bekukan APA yang digambar (disimpan di DB)
+ *     renderStamped()         -> gambar; fungsi murni, deterministik
+ *     writeFinalArchive()     -> tulis ke disk; HANYA saat approval final
+ *
+ *   Yang diminta sebelum approval final dilayani stamped-cache.service.js,
+ *   yang boleh dikosongkan kapan saja tanpa kehilangan data.
  */
 
 const { PDFDocument, StandardFonts, rgb, degrees } = require('pdf-lib');
 const path   = require('path');
 const fs     = require('fs');
+const crypto = require('crypto');
 const { prisma } = require('../config/prisma');
 const logger     = require('../config/logger');
 const { QR_SIZE_LIMIT_PT, SETTING_DEFAULTS, MAX_APPROVAL_LEVEL } = require('../config/stamp');
@@ -73,18 +91,31 @@ function rotatePoint(x, y, angleDeg) {
 }
 
 /**
- * @param {Object} footerPos - { pageNumber, xPercent, yPercent, widthPt, heightPt,
- *                                fontSize, rotation } (already resolved/validated by the caller)
- *                              rotation is one of 0 (Horizontal) / 90 (Vertical) /
- *                              180 (Flip Horizontal) / 270 (Flip Vertical).
+ * Tiga baris teks footer, diambil dari record dokumen.
+ *
+ * Dipisah dari drawFooter() karena isinya harus DIBEKUKAN ke dalam manifest
+ * saat penempelan terjadi. Kalau teksnya dibaca ulang dari database waktu
+ * merender, mengedit `labelName` bulan depan akan diam-diam mengubah stamp
+ * pada berkas yang sudah disetujui — dan berkas hasil regenerasi tidak lagi
+ * sama dengan yang dulu benar-benar dicetak.
  */
-async function drawFooter(pdfDoc, document, footerPos) {
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const lines = [
+function footerLinesFor(document) {
+  return [
     `ID Regulatory: ${document.regulatoryId}`,
     `Nama Label: ${truncate(document.labelName, 90)}`,
     `Nama File: ${truncate(document.fileNameOriginal, 90)}`,
   ];
+}
+
+/**
+ * @param {Object}   footerPos - { pageNumber, xPercent, yPercent, widthPt, heightPt,
+ *                                fontSize, rotation } (already resolved/validated by the caller)
+ *                               rotation is one of 0 (Horizontal) / 90 (Vertical) /
+ *                               180 (Flip Horizontal) / 270 (Flip Vertical).
+ * @param {string[]} lines     - teks yang digambar, sudah dibekukan oleh pemanggil.
+ */
+async function drawFooter(pdfDoc, footerPos, lines) {
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
   const fontSize = footerPos?.fontSize || FOOTER_FONT_SIZE;
   const rotation = footerPos?.rotation || 0;
@@ -227,33 +258,69 @@ function resolveSourcePath(document) {
 }
 
 /**
- * Nama berkas hasil penempelan. Satu per dokumen, bukan satu per level:
- * Level 0 menempel QR dokumen dan footer, level berikutnya tidak menggambar
- * apa pun sehingga tidak ada yang perlu ditulis ulang.
+ * Nama berkas arsip. Satu per dokumen, ditulis SEKALI saat approval final.
  *
- * Nama `signed_level0.pdf` dipertahankan supaya path dokumen lama di database
- * tetap sah dan tidak perlu migrasi.
+ * `signed_level0.pdf` dipertahankan sebagai nama karena dokumen lama menunjuk
+ * ke sana lewat path_signed_level0 dan path_signed_final; mengganti namanya
+ * berarti migrasi path di database tanpa manfaat apa pun.
  */
 const SIGNED_FILENAME = 'signed_level0.pdf';
 
 /**
- * Tempelkan QR dokumen (dan footer stamp) ke PDF. Dipanggil SEKALI saja, oleh
- * Level 0.
- *
- * Sebelumnya tiap level menempel QR miliknya sendiri, sehingga satu label bisa
- * membawa tiga QR yang masing-masing hanya mewakili satu approver. Sekarang
- * yang ditempel adalah QR milik dokumen (`document.qrPathOriginal`, menuju
- * `/e/{docUuid}`), dan halaman publiknya menampilkan seluruh rantai approval —
- * satu QR, isinya hidup dan bertambah seiring approval berjalan.
- *
- * @param {Object}      document - record Prisma; WAJIB punya `qrPathOriginal`
- * @param {Object}      approval - record approval Level 0 (dipakai untuk log)
- * @param {Object|null} position - posisi & ukuran QR, null = pakai default settings
- * @param {Object|null} footerPosition - posisi stamp ID/Label/Nama File
- * @returns {string} path PDF hasil penempelan
+ * Versi bentuk manifest. Dinaikkan kalau arti sebuah field berubah, supaya
+ * manifest lama tetap bisa dikenali dan dirender dengan aturan lamanya.
  */
-async function overlayEsign(document, approval, position, footerPosition = null) {
-  const settings = await getSettings();
+const MANIFEST_VERSION = 1;
+
+/**
+ * Field yang benar-benar menentukan rupa berkas hasil render. Dipakai untuk
+ * menghitung kunci cache: dua manifest dengan field-field ini sama PASTI
+ * menghasilkan PDF yang sama, jadi hasilnya boleh dipakai ulang.
+ *
+ * `stampedAt` dan `stampedBy` sengaja TIDAK ikut — keduanya jejak audit, tidak
+ * tergambar di halaman.
+ */
+const RENDER_KEYS = ['v', 'qr', 'footer', 'footerText', 'qrFile', 'sourceSha'];
+
+/**
+ * Kunci cache: sha256 dari bagian manifest yang mempengaruhi hasil render.
+ * Ikut masuk ke nama berkas cache, sehingga manifest berubah = cache otomatis
+ * meleset. Tidak ada invalidasi eksplisit yang bisa terlupa.
+ */
+function manifestHash(manifest) {
+  const subset = {};
+  for (const k of RENDER_KEYS) subset[k] = manifest[k] ?? null;
+  return crypto.createHash('sha256').update(JSON.stringify(subset)).digest('hex').slice(0, 16);
+}
+
+/**
+ * Tentukan apa yang akan digambar — dan bekukan.
+ *
+ * Semua fallback ke System Settings diselesaikan DI SINI, sekali, pada saat
+ * penempelan. Yang tersimpan adalah angka jadi, bukan "pakai default". Kalau
+ * superadmin menaikkan default ukuran QR tahun depan, dokumen yang sudah
+ * disetujui tetap dirender persis seperti saat disetujui.
+ *
+ * Ukuran juga sudah dijepit ke halaman di sini, sehingga renderStamped() tidak
+ * perlu mengambil keputusan apa pun.
+ *
+ * @param {Object}      document - record Prisma; WAJIB punya pathOriginal & qrPathOriginal
+ * @param {Object|null} position - posisi & ukuran QR pilihan approver, null = pakai default
+ * @param {Object|null} footerPosition - posisi footer stamp, null = pakai default
+ * @param {string|null} stampedBy - user id, untuk jejak audit
+ * @returns {Promise<Object>} manifest
+ */
+async function resolveStampManifest(document, position, footerPosition, stampedBy = null) {
+  const settings   = await getSettings();
+  const sourcePath = resolveSourcePath(document);
+
+  const qrFile = document.qrPathOriginal;
+  if (!qrFile || !fs.existsSync(qrFile)) {
+    throw new Error(
+      `Document QR not found for document ${document.id}. ` +
+      `qrService.generateOriginalQr() must finish and be persisted before stamping.`
+    );
+  }
 
   const pos = position
     ? validatePosition(position)
@@ -265,78 +332,171 @@ async function overlayEsign(document, approval, position, footerPosition = null)
         heightPt:   settings.defaultHeightPt,
       };
 
-  const sourcePath = resolveSourcePath(document);
+  const fp = footerPosition
+    ? validateFooterPosition(footerPosition)
+    : {
+        pageNumber: settings.footerDefaultPage,
+        xPercent:   settings.footerDefaultXPercent,
+        yPercent:   settings.footerDefaultYPercent,
+        widthPt:    settings.footerDefaultWidthPt,
+        heightPt:   settings.footerDefaultHeightPt,
+        fontSize:   settings.footerDefaultFontSize,
+        rotation:   settings.footerDefaultRotation,
+      };
 
-  const pdfBytes = fs.readFileSync(sourcePath);
-  const pdfDoc   = await PDFDocument.load(pdfBytes);
-  const pages    = pdfDoc.getPages();
+  // Jepit ke halaman sebenarnya. Batas paling atas adalah kertasnya sendiri,
+  // bukan angka tetap: A4, A5, atau ukuran tidak lazim masing-masing dijepit ke
+  // dirinya sendiri. Dilakukan sekarang supaya angka di manifest sudah final.
+  const srcBytes = fs.readFileSync(sourcePath);
+  const probe    = await PDFDocument.load(srcBytes);
+  const pages    = probe.getPages();
+  const pageIdx  = Math.max(0, Math.min(pages.length - 1, pos.pageNumber - 1));
+  const { width: pw, height: ph } = pages[pageIdx].getSize();
+  const maxOnPage = Math.min(pw, ph);
 
-  const pageIndex = Math.max(0, Math.min(pages.length - 1, pos.pageNumber - 1));
-  const page      = pages[pageIndex];
-  const { width: pageWidthPt, height: pageHeightPt } = page.getSize();
-
-  // Batas paling atas yang sesungguhnya adalah kertasnya sendiri, bukan angka
-  // tetap: QR tidak boleh lebih besar dari halaman tempat ia dicetak. Halaman
-  // A4, A5, atau ukuran tidak lazim masing-masing dijepit ke dirinya sendiri.
-  const maxOnPage = Math.min(pageWidthPt, pageHeightPt);
   if (pos.widthPt > maxOnPage || pos.heightPt > maxOnPage) {
     logger.warn(
-      `QR ${pos.widthPt}x${pos.heightPt}pt melebihi halaman ${pageWidthPt.toFixed(0)}x` +
-      `${pageHeightPt.toFixed(0)}pt — dijepit ke ${maxOnPage.toFixed(0)}pt`
+      `QR ${pos.widthPt}x${pos.heightPt}pt melebihi halaman ${pw.toFixed(0)}x${ph.toFixed(0)}pt ` +
+      `— dijepit ke ${maxOnPage.toFixed(0)}pt`
     );
     pos.widthPt  = Math.min(pos.widthPt,  maxOnPage);
     pos.heightPt = Math.min(pos.heightPt, maxOnPage);
   }
 
-  const xPt = (pos.xPercent / 100) * pageWidthPt;
-  const yPt = pageHeightPt - (pos.yPercent / 100) * pageHeightPt - pos.heightPt;
+  return {
+    v: MANIFEST_VERSION,
+    qr: {
+      page: pos.pageNumber,
+      xPct: pos.xPercent,
+      yPct: pos.yPercent,
+      wPt:  pos.widthPt,
+      hPt:  pos.heightPt,
+    },
+    footer: {
+      page:     fp.pageNumber,
+      xPct:     fp.xPercent,
+      yPct:     fp.yPercent,
+      wPt:      fp.widthPt,
+      hPt:      fp.heightPt,
+      fontSize: fp.fontSize,
+      rotation: fp.rotation,
+    },
+    footerText: footerLinesFor(document),
+    qrFile,
+    // Mengunci manifest ke isi berkas asli yang benar. Kalau original.pdf
+    // ternyata bukan yang dulu di-stamp, regenerasi harus berhenti, bukan
+    // diam-diam menghasilkan berkas yang berbeda.
+    sourceSha: crypto.createHash('sha256').update(srcBytes).digest('hex'),
+    stampedAt: new Date().toISOString(),
+    stampedBy,
+  };
+}
 
-  // QR milik DOKUMEN, bukan milik approval. Dibuat sekali saat upload dan
-  // menunjuk ke /e/{docUuid} — halaman yang menampilkan seluruh rantai.
-  const qrPath = document.qrPathOriginal;
-  if (!qrPath || !fs.existsSync(qrPath)) {
-    throw new Error(
-      `Document QR not found for document ${document.id}. ` +
-      `qrService.generateOriginalQr() must finish and be persisted before overlayEsign().`
-    );
+/**
+ * Gambar manifest ke atas PDF asli.
+ *
+ * Fungsi murni: tidak membaca System Settings, tidak menyentuh database, tidak
+ * menulis berkas. Masukan yang sama selalu menghasilkan keluaran yang sama —
+ * itulah yang membuat berkas hasil penempelan tidak perlu disimpan.
+ *
+ * @param {Object} document - butuh pathOriginal saja
+ * @param {Object} manifest - hasil resolveStampManifest()
+ * @returns {Promise<Buffer>} byte PDF hasil penempelan
+ */
+async function renderStamped(document, manifest) {
+  if (!manifest || manifest.v !== MANIFEST_VERSION) {
+    throw new Error(`Unsupported stamp manifest version: ${manifest?.v}`);
   }
 
-  const qrImageBytes = fs.readFileSync(qrPath);
-  const qrImage      = await pdfDoc.embedPng(qrImageBytes);
+  const sourcePath = resolveSourcePath(document);
+  const pdfDoc     = await PDFDocument.load(fs.readFileSync(sourcePath));
+  const pages      = pdfDoc.getPages();
+
+  const { qr } = manifest;
+  const pageIndex = Math.max(0, Math.min(pages.length - 1, qr.page - 1));
+  const page      = pages[pageIndex];
+  const { width: pageWidthPt, height: pageHeightPt } = page.getSize();
+
+  if (!fs.existsSync(manifest.qrFile)) {
+    throw new Error(`QR image missing for document ${document.id}: ${manifest.qrFile}`);
+  }
+  const qrImage = await pdfDoc.embedPng(fs.readFileSync(manifest.qrFile));
+
+  const xPt = (qr.xPct / 100) * pageWidthPt;
+  const yPt = pageHeightPt - (qr.yPct / 100) * pageHeightPt - qr.hPt;
 
   page.drawImage(qrImage, {
     x:      xPt,
     y:      Math.max(0, yPt),
-    width:  pos.widthPt,
-    height: pos.heightPt,
+    width:  qr.wPt,
+    height: qr.hPt,
   });
 
-  {
-    const resolvedFooterPos = footerPosition
-      ? validateFooterPosition(footerPosition)
-      : {
-          pageNumber: settings.footerDefaultPage,
-          xPercent:   settings.footerDefaultXPercent,
-          yPercent:   settings.footerDefaultYPercent,
-          widthPt:    settings.footerDefaultWidthPt,
-          heightPt:   settings.footerDefaultHeightPt,
-          fontSize:   settings.footerDefaultFontSize,
-          rotation:   settings.footerDefaultRotation,
-        };
-    await drawFooter(pdfDoc, document, resolvedFooterPos);
-  }
-  const storageDir = path.dirname(sourcePath);
-  const outPath    = path.join(storageDir, SIGNED_FILENAME);
-
-  const signedBytes = await pdfDoc.save();
-  fs.writeFileSync(outPath, signedBytes);
-
-  logger.info(
-    `PDF signed [approval ${approval.id}]: ${outPath} | ` +
-    `page ${pos.pageNumber} | x=${xPt.toFixed(1)}pt y=${yPt.toFixed(1)}pt`
+  const f = manifest.footer;
+  await drawFooter(
+    pdfDoc,
+    {
+      pageNumber: f.page,
+      xPercent:   f.xPct,
+      yPercent:   f.yPct,
+      widthPt:    f.wPt,
+      heightPt:   f.hPt,
+      fontSize:   f.fontSize,
+      rotation:   f.rotation,
+    },
+    manifest.footerText,
   );
 
+  return Buffer.from(await pdfDoc.save());
+}
+
+/**
+ * Tulis arsip permanen dari manifest. Dipanggil SEKALI, saat approval final.
+ *
+ * Inilah satu-satunya berkas hasil penempelan yang disimpan. Level 0 hanya
+ * menyimpan manifest; apa pun yang diminta orang sebelum approval final
+ * dirender saat itu juga lewat stamped-cache.service.
+ *
+ * @returns {Promise<string>} path berkas arsip
+ */
+async function writeFinalArchive(document, manifest) {
+  const outPath = path.join(path.dirname(resolveSourcePath(document)), SIGNED_FILENAME);
+  fs.writeFileSync(outPath, await renderStamped(document, manifest));
+  logger.info(`Arsip final ditulis: ${outPath}`);
   return outPath;
 }
 
-module.exports = { overlayEsign, getSettings, checkQrSize, MAX_APPROVAL_LEVEL, QR_SIZE_LIMIT_PT };
+/**
+ * Tempelkan QR dokumen + footer, lalu tulis berkasnya — resolve, render, tulis.
+ *
+ * Dipertahankan sebagai satu langkah utuh untuk pemanggil yang memang ingin
+ * berkasnya ada saat itu juga. Alur approval TIDAK lagi memakainya di Level 0:
+ * di sana hanya manifest yang disimpan.
+ *
+ * @returns {Promise<{ path: string, manifest: Object }>}
+ */
+async function overlayEsign(document, approval, position, footerPosition = null) {
+  const manifest = await resolveStampManifest(document, position, footerPosition, approval?.approverId || null);
+  const outPath  = await writeFinalArchive(document, manifest);
+  logger.info(
+    `PDF signed [approval ${approval?.id}]: ${outPath} | ` +
+    `page ${manifest.qr.page} | x=${manifest.qr.xPct}% y=${manifest.qr.yPct}%`
+  );
+  return { path: outPath, manifest };
+}
+
+module.exports = {
+  overlayEsign,
+  resolveStampManifest,
+  renderStamped,
+  writeFinalArchive,
+  manifestHash,
+  footerLinesFor,
+  getSettings,
+  checkQrSize,
+  resolveSourcePath,
+  SIGNED_FILENAME,
+  MANIFEST_VERSION,
+  MAX_APPROVAL_LEVEL,
+  QR_SIZE_LIMIT_PT,
+};
