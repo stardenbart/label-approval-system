@@ -4,7 +4,8 @@
 const Joi    = require('joi');
 const { prisma } = require('../config/prisma');
 const auditService = require('../services/audit.service');
-const { SETTING_DEFAULTS, QR_SIZE_LIMIT_PT, QR_SIZE_ADVISORY_MIN_PT, FOOTER_SIZE_LIMIT_PT } = require('../config/stamp');
+const { SETTING_DEFAULTS, QR_SIZE_LIMIT_PT, QR_SIZE_ADVISORY_MIN_PT, FOOTER_SIZE_LIMIT_PT,
+        ARCHIVE_COMPRESSION_PRESETS } = require('../config/stamp');
 
 const DEFAULTS = SETTING_DEFAULTS;
 
@@ -21,6 +22,7 @@ exports.getAll = async (req, res, next) => {
       qrMaxPt:        QR_SIZE_LIMIT_PT.max,
       qrAdvisoryMinPt: QR_SIZE_ADVISORY_MIN_PT,
       footer:          FOOTER_SIZE_LIMIT_PT,
+      compressionPresets: ARCHIVE_COMPRESSION_PRESETS,
     };
 
     res.json({ success: true, data });
@@ -44,6 +46,8 @@ exports.update = async (req, res, next) => {
       footer_default_page:      Joi.number().integer().min(1),
       footer_default_font_size: Joi.number().min(5).max(24),
       footer_default_rotation:  Joi.number().valid(0, 90, 180, 270),
+      // Satu-satunya setting yang bukan angka — jangan ikutkan ke num() di bawah.
+      archive_compression_preset: Joi.string().valid(...ARCHIVE_COMPRESSION_PRESETS),
     });
     const { error, value } = schema.validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });

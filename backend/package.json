@@ -14,6 +14,7 @@
     "db:studio": "npx prisma studio",
     "storage:dedupe": "node scripts/dedupe-storage.js",
     "storage:manifest": "node scripts/backfill-stamp-manifest.js",
+    "storage:compress": "node scripts/compress-archives.js",
     "test": "jest --runInBand"
   },
   "dependencies": {

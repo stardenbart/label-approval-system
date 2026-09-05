@@ -757,14 +757,23 @@ exports.serveSigned = async (req, res, next) => {
     if (result.status !== 'APPROVED') {
       return res.status(400).json({ success: false, message: 'Signed document not yet available' });
     }
-    // Dokumen APPROVED punya berkas arsip sungguhan; getStamped memakainya
-    // langsung dan tidak merender ulang. Jalur render hanya terpakai kalau
-    // arsipnya hilang dari disk — lebih baik daripada 404.
-    const signed = await stampedCache.getStamped(result);
+    // ?quality=full — lewati berkas arsip dan render ulang dari original.pdf
+    // yang tidak pernah disentuh.
+    //
+    // Arsipnya dikompresi Ghostscript (Flate -> JPEG, lihat
+    // pdf-compress.service.js), jadi ia sedikit berbeda dari sumbernya. Untuk
+    // pemakaian sehari-hari itu yang diinginkan — berkasnya jauh lebih kecil.
+    // Untuk cetak mutu penuh, versi tanpa kompresi selalu bisa dibuat ulang,
+    // karena yang hilang cuma ada di salinan, bukan di sumbernya.
+    const wantsFull = req.query.quality === 'full';
+    const signed = wantsFull && result.stampManifest
+      ? await stampedCache.getStamped({ ...result, pathSignedFinal: null, pathSignedLevel0: null })
+      : await stampedCache.getStamped(result);
     if (!signed) {
       return res.status(404).json({ success: false, message: 'Signed document not found' });
     }
-    await serveBuffer(signed, `signed_${result.fileNameOriginal}`, req, res, 'DOCUMENT_DOWNLOADED', result.id, 'attachment');
+    const name = wantsFull ? `signed_full_${result.fileNameOriginal}` : `signed_${result.fileNameOriginal}`;
+    await serveBuffer(signed, name, req, res, 'DOCUMENT_DOWNLOADED', result.id, 'attachment');
   } catch (err) { next(err); }
 };
 

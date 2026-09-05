@@ -50,7 +50,17 @@ const SETTING_DEFAULTS = {
   footer_default_page:      '1',
   footer_default_font_size: '7',
   footer_default_rotation:  '0',
+  // Preset kompresi berkas arsip. Diukur pada storage DAL: 'ebook' memangkas
+  // 52-58% TANPA menurunkan resolusi gambar (hanya Flate -> JPEG bermutu
+  // sedang), 'prepress' 5-14%, 'screen' 77-90% tapi resolusinya benar-benar
+  // dipangkas dan terlihat. 'none' mematikan kompresi.
+  // Lihat pdf-compress.service.js untuk tabel lengkapnya.
+  archive_compression_preset: 'ebook',
 };
+
+// Preset yang boleh dipilih. Ada di sini, bukan di service, supaya validator
+// settings dan daftar pilihan di UI membaca sumber yang sama.
+const ARCHIVE_COMPRESSION_PRESETS = ['none', 'prepress', 'ebook', 'screen'];
 
 // Kotak footer bukan persegi dan bukan gambar — batasnya beda dari QR, tapi
 // prinsipnya sama: satu tempat, dipakai validator server maupun kontrol di UI.
@@ -76,6 +86,7 @@ const toPt = (mm) => mm * PT_PER_MM;
 
 module.exports = {
   MAX_APPROVAL_LEVEL,
+  ARCHIVE_COMPRESSION_PRESETS,
   QR_SIZE_LIMIT_PT,
   FOOTER_SIZE_LIMIT_PT,
   QR_SIZE_ADVISORY_MIN_PT,

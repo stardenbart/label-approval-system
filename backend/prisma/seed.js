@@ -23,6 +23,7 @@ async function main() {
     { key: 'footer_default_page',      value: '1',   description: 'Halaman default penempatan stamp footer' },
     { key: 'footer_default_font_size', value: '7',   description: 'Ukuran font default stamp footer (pt)' },
     { key: 'footer_default_rotation',  value: '0',   description: 'Orientasi default stamp footer (0=Horizontal, 90=Vertical, 180=Flip Horizontal, 270=Flip Vertical)' },
+    { key: 'archive_compression_preset', value: 'ebook', description: 'Preset kompresi Ghostscript untuk berkas arsip: none, prepress, ebook, screen (lihat pdf-compress.service.js)' },
   ];
 
   for (const s of settings) {

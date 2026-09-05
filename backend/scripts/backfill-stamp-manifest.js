@@ -27,6 +27,7 @@ const fs   = require('fs');
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const pdfService = require('../src/services/pdf.service');
+const { fingerprint, sameFingerprint } = require('../src/services/pdf-fingerprint.service');
 
 const APPLY  = process.argv.includes('--apply');
 const VERIFY = process.argv.includes('--verify');
@@ -34,36 +35,6 @@ const PRUNE  = process.argv.includes('--prune');
 const prisma = new PrismaClient();
 
 const mb = (b) => `${(b / 1024 / 1024).toFixed(2)} MB`;
-
-/** Ciri visual sebuah PDF — cukup untuk membuktikan dua berkas menggambar hal yang sama. */
-async function fingerprint(bytes) {
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const doc   = await pdfjs.getDocument({ data: new Uint8Array(bytes), verbosity: 0 }).promise;
-  const pages = [];
-  for (let i = 1; i <= doc.numPages; i++) {
-    const pg  = await doc.getPage(i);
-    const vp  = pg.getViewport({ scale: 1 });
-    const ops = await pg.getOperatorList();
-    let images = 0;
-    for (const fn of ops.fnArray) {
-      if (fn === pdfjs.OPS.paintImageXObject || fn === pdfjs.OPS.paintJpegXObject) images++;
-    }
-    const text = (await pg.getTextContent()).items.map(t => t.str).join('').replace(/\s+/g, '');
-    pages.push({ w: Math.round(vp.width), h: Math.round(vp.height), images, text });
-  }
-  return { numPages: doc.numPages, pages };
-}
-
-function sameFingerprint(a, b) {
-  if (a.numPages !== b.numPages) return `jumlah halaman ${a.numPages} vs ${b.numPages}`;
-  for (let i = 0; i < a.numPages; i++) {
-    const x = a.pages[i], y = b.pages[i];
-    if (x.w !== y.w || x.h !== y.h)   return `halaman ${i + 1}: ukuran ${x.w}x${x.h} vs ${y.w}x${y.h}`;
-    if (x.images !== y.images)        return `halaman ${i + 1}: jumlah gambar ${x.images} vs ${y.images}`;
-    if (x.text !== y.text)            return `halaman ${i + 1}: teks berbeda`;
-  }
-  return null;
-}
 
 async function main() {
   const modes = [APPLY && '--apply', VERIFY && '--verify', PRUNE && '--prune'].filter(Boolean);

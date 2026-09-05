@@ -45,6 +45,12 @@
  *
  *   Yang diminta sebelum approval final dilayani stamped-cache.service.js,
  *   yang boleh dikosongkan kapan saja tanpa kehilangan data.
+ *
+ *   Berkas arsip itu kemudian dikompresi Ghostscript (lihat
+ *   pdf-compress.service.js). Kompresinya lossy dan tidak bisa dibalik, tapi
+ *   `original.pdf` tetap utuh dan manifest tetap tersimpan — jadi versi mutu
+ *   penuh selalu bisa dibuat ulang, dan itulah yang dilayani endpoint
+ *   /documents/:id/signed?quality=full.
  */
 
 const { PDFDocument, StandardFonts, rgb, degrees } = require('pdf-lib');
@@ -54,6 +60,7 @@ const crypto = require('crypto');
 const { prisma } = require('../config/prisma');
 const logger     = require('../config/logger');
 const { QR_SIZE_LIMIT_PT, SETTING_DEFAULTS, MAX_APPROVAL_LEVEL } = require('../config/stamp');
+const compressService = require('./pdf-compress.service');
 
 /**
  * Footer stamp (ID Regulatory / Nama Label / Nama File):
@@ -459,10 +466,19 @@ async function renderStamped(document, manifest) {
  *
  * @returns {Promise<string>} path berkas arsip
  */
-async function writeFinalArchive(document, manifest) {
+async function writeFinalArchive(document, manifest, { compress = true } = {}) {
   const outPath = path.join(path.dirname(resolveSourcePath(document)), SIGNED_FILENAME);
   fs.writeFileSync(outPath, await renderStamped(document, manifest));
   logger.info(`Arsip final ditulis: ${outPath}`);
+
+  // Kompresi berjalan SETELAH berkasnya utuh di disk, dan menimpanya hanya
+  // kalau hasilnya lolos pemeriksaan (halaman utuh, benar-benar lebih kecil).
+  // Gagal apa pun — Ghostscript tidak terpasang, timeout, keluaran rusak —
+  // meninggalkan arsip mutu penuh apa adanya. Tidak ada yang perlu ditangani
+  // pemanggil.
+  if (compress) {
+    await compressService.compressInPlace(outPath);
+  }
   return outPath;
 }
 
