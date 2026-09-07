@@ -6,6 +6,8 @@
 // penjagaan sebelum berkas ditimpa hasil kompresi.
 //
 // Berkas sementara dibuat di folder khusus per test dan dibersihkan sendiri.
+// pdf-fingerprint.service memuat pdfjs lewat dynamic import ESM; Jest butuh
+// --experimental-vm-modules untuk itu (disetel di script npm test).
 module.exports = {
   testEnvironment: 'node',
   setupFiles: ['<rootDir>/tests/setup.js'],

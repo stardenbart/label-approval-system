@@ -49,6 +49,11 @@ const mb = (b) => `${(b / 1024 / 1024).toFixed(2)} MB`;
  */
 async function reproducibilityCheck(doc, archivePath) {
   if (!doc.stampManifest) return 'tidak ada stamp_manifest';
+  // Sama seperti --prune: manifest hasil backfill adalah tebakan yang masuk
+  // akal, bukan rekaman. Kompresi di sini lossy dan tidak bisa dibatalkan.
+  if (!pdfService.manifestIsTrustworthy(doc.stampManifest)) {
+    return 'manifest hasil backfill, bukan rekaman saat penempelan';
+  }
   if (!doc.pathOriginal || !fs.existsSync(doc.pathOriginal)) return 'original.pdf tidak ada';
   try {
     const rendered = await pdfService.renderStamped(doc, doc.stampManifest);

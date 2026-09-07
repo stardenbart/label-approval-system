@@ -16,7 +16,7 @@
     "storage:dedupe": "node scripts/dedupe-storage.js",
     "storage:manifest": "node scripts/backfill-stamp-manifest.js",
     "storage:compress": "node scripts/compress-archives.js",
-    "test": "jest --runInBand"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

@@ -290,6 +290,29 @@ const MANIFEST_VERSION = 1;
 const RENDER_KEYS = ['v', 'qr', 'footer', 'footerText', 'qrFile', 'sourceSha'];
 
 /**
+ * Dari mana manifest ini berasal.
+ *
+ *   stamp     dibuat resolveStampManifest() pada saat penempelan. Berkas hasil
+ *             render dijamin sama dengan yang dulu benar-benar dicetak.
+ *   backfill  disusun scripts/backfill-stamp-manifest.js dari baris posisi yang
+ *             tersimpan. Tebakan yang masuk akal, TAPI tidak ada yang menyaksikan
+ *             penempelan aslinya — dokumen yang di-stamp versi lama memakai QR
+ *             per approval, bukan QR dokumen, dan itu tidak terekam di mana pun.
+ */
+const MANIFEST_ORIGIN = { STAMP: 'stamp', BACKFILL: 'backfill' };
+
+/**
+ * Bolehkah manifest ini dipakai sebagai dasar operasi yang TIDAK BISA
+ * DIBATALKAN (menghapus berkas, menimpanya dengan versi lossy)?
+ *
+ * Manifest lama yang belum punya `origin` diperlakukan sebagai backfill —
+ * gagal ke arah aman.
+ */
+function manifestIsTrustworthy(manifest) {
+  return manifest?.origin === MANIFEST_ORIGIN.STAMP;
+}
+
+/**
  * Kunci cache: sha256 dari bagian manifest yang mempengaruhi hasil render.
  * Ikut masuk ke nama berkas cache, sehingga manifest berubah = cache otomatis
  * meleset. Tidak ada invalidasi eksplisit yang bisa terlupa.
@@ -396,6 +419,11 @@ async function resolveStampManifest(document, position, footerPosition, stampedB
     sourceSha: crypto.createHash('sha256').update(srcBytes).digest('hex'),
     stampedAt: new Date().toISOString(),
     stampedBy,
+    // Dibuat SAAT penempelan, jadi berkas hasil render dijamin sama dengan apa
+    // yang benar-benar dicetak. Manifest yang disusun belakangan oleh skrip
+    // backfill menandai dirinya 'backfill' dan TIDAK memberi jaminan itu —
+    // lihat manifestIsTrustworthy().
+    origin: MANIFEST_ORIGIN.STAMP,
   };
 }
 
@@ -507,6 +535,8 @@ module.exports = {
   renderStamped,
   writeFinalArchive,
   manifestHash,
+  manifestIsTrustworthy,
+  MANIFEST_ORIGIN,
   footerLinesFor,
   getSettings,
   checkQrSize,

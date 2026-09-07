@@ -120,11 +120,30 @@ npm run storage:manifest -- --verify
 Perbandingannya bukan byte — pdf-lib menyusun objek berbeda tiap menyimpan —
 melainkan jumlah halaman, ukuran halaman, jumlah gambar, dan teks.
 
-**Sebagian dokumen akan sengaja TIDAK cocok**, dengan pesan seperti
-`halaman 1: jumlah gambar 3 vs 2`. Itu dokumen yang di-stamp sebelum aturan
-"satu QR per dokumen" berlaku: berkasnya memuat QR per level yang tidak akan
-pernah digambar lagi. **Itu benar.** Berkas lamanya dipertahankan sebagai
-catatan apa yang sungguh-sungguh tercetak. Jangan dipaksa.
+**Sebagian dokumen akan sengaja TIDAK cocok.** Ada tiga sebab, dan ketiganya
+benar:
+
+| Pesan | Artinya |
+|---|---|
+| `jumlah gambar 3 vs 2` | Di-stamp sebelum aturan "satu QR per dokumen"; berkasnya memuat QR per level |
+| `isi gambar berbeda (…)` | Jumlah QR-nya sama, tapi **tujuannya berbeda** — berkas lama menunjuk `/e/approval/<id>`, render baru `/e/<dokumen>` |
+| `manifest hasil backfill` | Manifest disusun ulang oleh skrip, bukan direkam saat penempelan |
+
+Baris kedua itu yang paling halus dan paling berbahaya. Dokumen yang berhenti
+di Level 0 hanya membawa **satu** QR, jadi strukturnya identik dengan hasil
+render sekarang — hanya isinya yang berbeda. Sidik jari versi pertama
+menyatakan keduanya sama dan akan membiarkan berkasnya dihapus, sehingga QR
+pada label berubah tujuan tanpa peringatan. Di produksi ada **20 dokumen**
+seperti itu.
+
+**Berkas yang tidak cocok dipertahankan.** Itu bukan sampah — itu satu-satunya
+salinan dari apa yang sungguh-sungguh tercetak, dan tidak bisa dibuat ulang.
+Jangan dipaksa dengan `--force` tanpa alasan tertulis.
+
+> **Verifikasi adalah gerbang SEBELUM kompresi.** Arsip yang sudah dikompresi
+> Ghostscript tidak akan pernah cocok dengan render segar — gambarnya sudah
+> JPEG, render menghasilkan Flate. Menjalankan `--verify` pada arsip
+> terkompresi akan selalu melaporkan `isi gambar berbeda`, dan itu wajar.
 
 Baru setelah itu:
 

@@ -14,6 +14,12 @@
  *   node scripts/backfill-stamp-manifest.js --apply    # isi kolom manifest
  *   node scripts/backfill-stamp-manifest.js --verify   # bandingkan render vs berkas lama
  *   node scripts/backfill-stamp-manifest.js --prune    # buang berkas turunan (butuh --verify lolos)
+ *   node scripts/backfill-stamp-manifest.js --verify --prune --force
+ *
+ * Secara bawaan --prune HANYA menyentuh dokumen yang manifest-nya dibuat saat
+ * penempelan (origin 'stamp'). Manifest hasil backfill adalah susunan ulang,
+ * bukan rekaman: dokumen yang di-stamp versi lama menempel QR per approval,
+ * bukan QR dokumen, dan itu tidak terekam di mana pun. --force melewatinya.
  *
  * --prune HANYA menyentuh dokumen yang lolos --verify: hasil render dari
  * manifest harus cocok dengan berkas lama dalam jumlah halaman, ukuran halaman,
@@ -32,6 +38,7 @@ const { fingerprint, sameFingerprint } = require('../src/services/pdf-fingerprin
 const APPLY  = process.argv.includes('--apply');
 const VERIFY = process.argv.includes('--verify');
 const PRUNE  = process.argv.includes('--prune');
+const FORCE  = process.argv.includes('--force');
 const prisma = new PrismaClient();
 
 const mb = (b) => `${(b / 1024 / 1024).toFixed(2)} MB`;
@@ -98,6 +105,11 @@ async function main() {
 
       // Waktu stamp yang sebenarnya, bukan waktu skrip ini dijalankan.
       manifest.stampedAt = (pos.createdAt || d.createdAt).toISOString();
+      // Manifest ini SUSUNAN ULANG, bukan rekaman. Tidak ada yang menyaksikan
+      // penempelan aslinya, dan dokumen versi lama menempel QR per approval —
+      // bukan QR dokumen — tanpa itu terekam di mana pun. --prune memakai
+      // penanda ini untuk menolak menghapus berkas yang dasarnya cuma tebakan.
+      manifest.origin = pdfService.MANIFEST_ORIGIN.BACKFILL;
 
       if (APPLY) {
         await prisma.document.update({ where: { id: d.id }, data: { stampManifest: manifest } });
@@ -133,6 +145,15 @@ async function main() {
 
     // ── 3. Buang berkas turunan yang tidak perlu lagi ───────────────────
     if (!PRUNE) continue;
+
+    // Sidik jari cocok belum cukup untuk MENGHAPUS. Sidik jari membandingkan
+    // apa yang tergambar; ia tidak tahu apakah manifest yang dipakai merender
+    // benar-benar mewakili keputusan yang dulu diambil. Untuk manifest hasil
+    // backfill, jawabannya tidak ada yang tahu.
+    if (!pdfService.manifestIsTrustworthy(manifest) && !FORCE) {
+      console.log(`  LEWATI  ${label} — manifest hasil backfill, bukan rekaman saat penempelan; pakai --force bila memang disengaja`);
+      continue;
+    }
 
     // Dokumen APPROVED tetap menyimpan SATU berkas arsip. Yang dibuang adalah
     // turunan antara: signed_level1 dan salinan level0 yang bukan arsip.
