@@ -232,6 +232,7 @@ sudo systemctl reload nginx
 
 | Berkas | Isi |
 |---|---|
+| `VERSION.md` | Skema versi, catatan rilis, dan build mana yang sedang berjalan di tiap lingkungan |
 | `IMPLEMENTATION_REPORT.md` | Apa saja yang sudah diterapkan pada branch ini — penyimpanan, QR, kesiapan produksi — beserta angka pengukurannya |
 | `QA_REPORT.md` | Temuan QA / keamanan / bug |
 | `dal_prd_v1.md` | Product requirement document |
