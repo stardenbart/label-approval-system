@@ -129,7 +129,13 @@ cmd_up() {
     APP_URL="${APP_URL}" \
     FRONTEND_URL="${APP_URL}" \
     GS_BINARY="${GS_BINARY:-gs}" \
-    nohup node src/app.js > "${STAGE}/logs/backend.out" 2>&1 & echo $! > "${STAGE}/backend.pid" )
+    nohup node src/app.js > "${STAGE}/logs/backend.out" 2>&1 & echo $! > "${STAGE}/backend.pid" ) 2>/dev/null
+
+  # Pid yang dicatat subshell tidak selalu pid proses yang akhirnya memegang
+  # port — pembungkus npm/npx menyisipkan proses perantara. Catat ulang dari
+  # port itu sendiri setelah proses melayani, supaya `down` benar-benar
+  # mematikan yang tepat.
+  sleep 1
 
   echo "[5/5] Frontend di port ${FRONTEND_PORT}..."
   ( cd "${ROOT}/frontend" && \
@@ -144,6 +150,9 @@ cmd_up() {
     sleep 1
     [ "$i" = 30 ] && { echo "GAGAL: backend tidak merespons. Lihat ${STAGE}/logs/backend.out" >&2; tail -20 "${STAGE}/logs/backend.out"; exit 1; }
   done
+
+  lsof -ti tcp:${BACKEND_PORT} 2>/dev/null | head -1 > "${STAGE}/backend.pid"  || true
+  lsof -ti tcp:${FRONTEND_PORT} 2>/dev/null | head -1 > "${STAGE}/frontend.pid" || true
 
   echo ""
   say "Staging siap"
