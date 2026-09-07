@@ -216,15 +216,55 @@ yang identik byte dengan arsip sebelum dikompresi.
 npm run storage:doctor                    # bandingkan dengan angka di awal
 ```
 
-Pasang backup harian kalau belum:
+## Backup terjadwal
 
-```bash
-echo '0 1 * * * root bash /var/www/dal-system/deploy/backup.sh >> /var/log/dal/backup.log 2>&1' \
-  | sudo tee /etc/cron.d/dal-backup
+Sudah terpasang di produksi (172.20.240.49) sebagai crontab user `administrator`,
+tanpa `sudo` — `/var/backups` butuh root, jadi tujuannya `~/dal-backup`:
+
+```cron
+# DAL backup — database harian 01:00, penuh (database + berkas) Minggu 01:30.
+0 1 * * *  APP_DIR=/var/www/dal-system BACKUP_DIR=/home/administrator/dal-backup RETENTION_DAYS=30 bash /var/www/dal-system/deploy/backup.sh --db-only >> /home/administrator/dal-backup/backup.log 2>&1
+30 1 * * 0 APP_DIR=/var/www/dal-system BACKUP_DIR=/home/administrator/dal-backup RETENTION_DAYS=30 bash /var/www/dal-system/deploy/backup.sh >> /home/administrator/dal-backup/backup.log 2>&1
 ```
 
-Dan sekali, sungguhan, pulihkan backup ke database uji. Backup yang tidak pernah
-diuji bukan backup.
+Harian hanya database (105 KB, hitungan detik); mingguan penuh (400 MB, ~90
+detik). Berkas dokumen jarang berubah, jadi menyalin 400 MB tiap hari hanya
+membuang I/O tanpa menambah perlindungan.
+
+`APP_DIR` disetel di baris cron supaya `backup.sh` melewati `env.sh` — cron
+tidak punya argumen lingkungan, dan menebak lingkungan dari cron adalah cara
+cepat menimpa backup produksi dengan backup staging.
+
+**Perhatian:** crontab itu memakai `/var/www/dal-system/deploy/backup.sh`, dan
+`deploy.sh` **tidak** menyinkronkan folder `deploy/`. Setelah mengubah
+`backup.sh` di repo, salin manual:
+
+```bash
+scp deploy/backup.sh administrator@172.20.240.49:/var/www/dal-system/deploy/
+```
+
+### Backup itu masih satu mesin dengan datanya
+
+Kalau server bermasalah, backup dan data hilang bersamaan. Salin keluar secara
+berkala:
+
+```bash
+rsync -avH administrator@172.20.240.49:~/dal-backup/ ./backups-produksi/
+```
+
+`-H` di sini WAJIB — rsync tidak mempertahankan hard link kecuali diminta.
+(Untuk `tar` justru sebaliknya: jangan tambahkan `-H`, ia sudah melakukannya
+sendiri dan pada GNU tar `-H` berarti `--format`.)
+
+### Uji pulih
+
+Sekali, sungguhan, pulihkan ke database uji. Backup yang tidak pernah diuji
+bukan backup.
+
+```bash
+gunzip -c ~/dal-backup/dal_db_*.sql.gz | mysql -u root -p dal_db_uji
+tar -tzf ~/dal-backup/dal_storage_*.tar.gz | grep -c '\.pdf$'   # harus 191
+```
 
 ---
 
