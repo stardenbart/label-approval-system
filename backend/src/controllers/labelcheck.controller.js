@@ -7,7 +7,7 @@ const Joi    = require('joi');
 const { prisma }       = require('../config/prisma');
 const auditService     = require('../services/audit.service');
 const reportService    = require('../services/label-check-report.service');
-const { STORAGE_PATH, IMG_TMP } = require('../middleware/upload');
+const { STORAGE_PATH } = require('../middleware/upload');
 
 // ─── Parameters ───────────────────────────────────────────────────
 exports.listParameters = async (req, res, next) => {

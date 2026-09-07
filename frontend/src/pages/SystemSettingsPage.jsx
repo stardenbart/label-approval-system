@@ -1,8 +1,10 @@
 // frontend/src/pages/SystemSettingsPage.jsx
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Settings, Save, RotateCcw, Loader2 } from 'lucide-react';
 import api   from '../services/api';
+import { qk } from '../services/queryKeys';
+import { afterSettingsChange } from '../services/cacheSync';
 import toast from 'react-hot-toast';
 
 export default function SystemSettingsPage() {
@@ -11,13 +13,28 @@ export default function SystemSettingsPage() {
   const [loading, setLoading] = useState(false);
 
   const { data: settings, isLoading } = useQuery({
-    queryKey: ['settings'],
+    queryKey: qk.settings(),
     queryFn:  () => api.get('/settings').then(r => r.data.data),
   });
 
   useEffect(() => {
-    if (settings) setForm({ ...settings });
+    // `limits` bersifat baca-saja dari server dan bukan field yang bisa disunting —
+    // jangan ikut masuk ke state form.
+    if (settings) {
+      const { limits: _limits, ...editable } = settings;
+      setForm(editable);
+    }
   }, [settings]);
+
+  // Batas teknis datang dari server (GET /api/settings → data.limits), bukan
+  // angka yang disalin di sini. Dulu form ini punya min/max sendiri yang
+  // diam-diam berbeda dari validasi server.
+  const limits  = settings?.limits || {};
+  const QR_MIN  = limits.qrMinPt ?? 20;
+  const QR_MAX  = limits.qrMaxPt ?? 595;
+  const ADVISORY = limits.qrAdvisoryMinPt ?? 57;
+
+  const mm = (pt) => (parseFloat(pt) || 0) * 25.4 / 72;
 
   function field(key, label, min, max, step = 1) {
     return (
@@ -30,6 +47,14 @@ export default function SystemSettingsPage() {
           value={form[key] || ''}
           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
         />
+        {key.endsWith('_pt') && (
+          <p className="text-xs text-gray-400 mt-1">
+            ≈ {mm(form[key]).toFixed(1)} mm
+            {parseFloat(form[key]) < ADVISORY && (
+              <span className="text-amber-600"> · di bawah {ADVISORY}pt (~20 mm) QR mulai sulit dipindai</span>
+            )}
+          </p>
+        )}
       </div>
     );
   }
@@ -54,7 +79,7 @@ export default function SystemSettingsPage() {
         footer_default_font_size: parseFloat(form.footer_default_font_size),
         footer_default_rotation:  parseInt(form.footer_default_rotation),
       });
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      afterSettingsChange(queryClient);
       toast.success('Settings berhasil disimpan');
     } catch (err) {
       toast.error(err.response?.data?.message || 'Gagal menyimpan');
@@ -68,7 +93,7 @@ export default function SystemSettingsPage() {
     setLoading(true);
     try {
       await api.post('/settings/reset');
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      afterSettingsChange(queryClient);
       toast.success('Settings direset ke default');
     } catch (_) {
       toast.error('Gagal reset');
@@ -110,8 +135,8 @@ export default function SystemSettingsPage() {
               <h3 className="font-semibold text-gray-900">Default QR Stamp</h3>
 
               <div className="grid grid-cols-2 gap-4">
-                {field('qr_default_width_pt',  'Default Width (pt)',  60, 200)}
-                {field('qr_default_height_pt', 'Default Height (pt)', 60, 200)}
+                {field('qr_default_width_pt',  'Default Width (pt)',  QR_MIN, QR_MAX)}
+                {field('qr_default_height_pt', 'Default Height (pt)', QR_MIN, QR_MAX)}
                 {field('qr_default_page',      'Default Page',     1, 99)}
                 {field('qr_default_x_percent', 'X Default (%)', 0, 100, 0.5)}
                 {field('qr_default_y_percent', 'Y Default (%)', 0, 100, 0.5)}
@@ -120,8 +145,8 @@ export default function SystemSettingsPage() {
               <div className="border-t pt-4">
                 <h4 className="font-medium text-gray-700 mb-3 text-sm">Resize Range</h4>
                 <div className="grid grid-cols-2 gap-4">
-                  {field('qr_min_width_pt', 'Minimum Width (pt)', 20, 100)}
-                  {field('qr_max_width_pt', 'Maximum Width (pt)', 100, 400)}
+                  {field('qr_min_width_pt', 'Minimum Width (pt)', QR_MIN, QR_MAX)}
+                  {field('qr_max_width_pt', 'Maximum Width (pt)', QR_MIN, QR_MAX)}
                 </div>
               </div>
 

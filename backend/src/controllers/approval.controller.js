@@ -5,39 +5,45 @@
 // FIX-05a — suggestedApprovers: isFinalLevel now uses mapping-based check (see resolveIsFinalLevel).
 // FIX-05b — approve(): isFinalLevel determined by absence of a mapping for level+1, not a
 //            hardcoded `>= 2` or fragile `_max.level || 2` fallback.
-// FIX-06  — QR-per-approval: each approval now generates its OWN QR (qrService.generateApprovalQr)
-//            BEFORE pdfService.overlayEsign() is called, and persists it to approval.qrPath.
-//            Previously overlayEsign read document.qrPathEsign (one generic QR reused at every
-//            level). Now every level — Staff, SPV, Marketing/Final — gets a QR pointing to
-//            /e/approval/{approvalId}, identifying exactly who signed at that point.
+// FIX-06  — (DIGANTI) Dulu tiap approval membuat QR sendiri dan menempelkannya,
+//            sehingga satu label memuat tiga QR. Sekarang QR dokumen ditempel
+//            sekali di Level 0 dan halaman publiknya menampilkan seluruh rantai;
+//            level 1 dan 2 tidak menempel apa pun. Lihat header pdf.service.js.
+//            approval.qrPath berhenti diisi untuk dokumen baru, tapi tetap
+//            dilayani untuk label lama yang sudah tercetak.
 
 const fs     = require('fs');
 const path   = require('path');
 const Joi    = require('joi')
 const { prisma }    = require('../config/prisma');
 const pdfService    = require('../services/pdf.service');
+const { QR_SIZE_LIMIT_PT, FOOTER_SIZE_LIMIT_PT } = require('../config/stamp');
 const qrService      = require('../services/qr.service');
 const notifService  = require('../services/notification.service');
 const emailService  = require('../services/email.service');
 const auditService  = require('../services/audit.service');
 const logger        = require('../config/logger');
-const { STORAGE_PATH } = require('../middleware/upload');
 
 const positionSchema = Joi.object({
   pageNumber: Joi.number().integer().min(1).required(),
   xPercent:   Joi.number().min(0).max(100).required(),
   yPercent:   Joi.number().min(0).max(100).required(),
-  widthPt:    Joi.number().min(10).max(200).required(),
-  heightPt:   Joi.number().min(10).max(200).required(),
+  // Batas TEKNIS saja — pagar keselamatan yang sama dipakai saat upload maupun
+  // approve. Batas kebijakan (rentang yang boleh dipakai sehari-hari) datang
+  // dari System Settings dan diperiksa terpisah lewat pdfService.checkQrSize.
+  // Dulu di sini tertulis .max(200) sebagai angka mati, sehingga menaikkan batas
+  // lewat System Settings tidak pernah benar-benar berlaku.
+  widthPt:    Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max).required(),
+  heightPt:   Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max).required(),
 });
 
 const footerPositionSchema = Joi.object({
   pageNumber: Joi.number().integer().min(1).required(),
   xPercent:   Joi.number().min(0).max(100).required(),
   yPercent:   Joi.number().min(0).max(100).required(),
-  widthPt:    Joi.number().min(50).max(400).required(),
-  heightPt:   Joi.number().min(15).max(100).required(),
-  fontSize:   Joi.number().min(5).max(24).default(7),
+  widthPt:    Joi.number().min(FOOTER_SIZE_LIMIT_PT.minW).max(FOOTER_SIZE_LIMIT_PT.maxW).required(),
+  heightPt:   Joi.number().min(FOOTER_SIZE_LIMIT_PT.minH).max(FOOTER_SIZE_LIMIT_PT.maxH).required(),
+  fontSize:   Joi.number().min(FOOTER_SIZE_LIMIT_PT.minFont).max(FOOTER_SIZE_LIMIT_PT.maxFont).default(7),
   rotation:   Joi.number().valid(0, 90, 180, 270).default(0),
 });
 
@@ -65,7 +71,7 @@ async function resolveIsFinalLevel(approval) {
 exports.approve = async (req, res, next) => {
   try {
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId, status: 'PENDING' },
+      where:   { id: req.params.approvalId, status: 'PENDING', document: { deletedAt: null } },
       include: { document: { include: { productCategory: true } }, approver: true },
     });
 
@@ -89,6 +95,16 @@ exports.approve = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Next approver is required for non-final levels' });
     }
 
+    // Ukuran QR harus berada dalam rentang yang disetel superadmin. Diperiksa di
+    // sini supaya jawabannya 400 dengan angka batasnya, bukan gambar yang
+    // diam-diam mengecil di PDF.
+    if (value.position) {
+      const sizeCheck = pdfService.checkQrSize(value.position, await pdfService.getSettings());
+      if (!sizeCheck.ok) {
+        return res.status(400).json({ success: false, message: sizeCheck.message, code: 'QR_SIZE_OUT_OF_RANGE' });
+      }
+    }
+
     // Footer stamp position can only be set once, at Level 0 (Staff Regulatory).
     // Levels 1/2 must not move it — enforce server-side, not just hide it in the UI.
     if (value.footerPosition && approval.level !== 0) {
@@ -103,33 +119,83 @@ exports.approve = async (req, res, next) => {
       if (!nextApprover) return res.status(400).json({ success: false, message: 'Invalid next approver' });
     }
 
-    // ── FIX-06: Generate THIS approval's own QR before overlay ───────────
-    // Must happen before overlayEsign, since overlayEsign now reads approval.qrPath.
+    // ── Dua hal yang berbeda, jangan tertukar ───────────────────────────
+    //
+    // 1. QR YANG DICETAK — satu saja per dokumen (document.qrPathOriginal →
+    //    /e/{docUuid}), ditempel sekali oleh Level 0 bersama footer stamp.
+    //    Level 1 dan 2 tidak menggambar apa pun ke PDF.
+    //
+    // 2. QR PER LEVEL — tiap approval tetap punya QR sendiri
+    //    (/e/approval/{approvalId}) yang menampilkan konfirmasi level itu saja.
+    //    Ini TIDAK ditempel ke PDF; gunanya untuk ditelusuri per level dari
+    //    halaman detail dokumen.
+    //
+    // Sebelumnya keduanya digabung: QR per level ikut dicetak, sehingga satu
+    // label memuat tiga QR.
+    const isLevel0 = approval.level === 0;
+    const position = value.position || null;
+
     const docStorageDir = path.dirname(approval.document.pathOriginal);
-    let qrPath = null;
+    let approvalQrPath = null;
     try {
-      qrPath = await qrService.generateApprovalQr(approval.id, docStorageDir, approval.level);
+      approvalQrPath = await qrService.generateApprovalQr(approval.id, docStorageDir, approval.level);
     } catch (qrErr) {
       logger.error('Approval QR generation failed:', qrErr);
       return res.status(500).json({ success: false, message: 'Failed to generate approval QR', code: 'QR_ERROR' });
     }
 
-    // Persist qrPath onto the approval record BEFORE overlay so overlayEsign can read it.
-    // (overlayEsign receives the in-memory `approval` object directly, so attach it there too.)
-    await prisma.documentApproval.update({ where: { id: approval.id }, data: { qrPath } });
-    approval.qrPath = qrPath;
+    if (position && !isLevel0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Posisi QR hanya dapat diatur di Level 0 — level berikutnya tidak menempel stamp',
+      });
+    }
 
-    // Process PDF overlay BEFORE transaction — rollback file on TX failure
-    const position = value.position || null;
-    // Only meaningful at level 0 — pdfService ignores it for level > 0 anyway,
-    // but only forward it there defensively (matches the level check above).
-    const footerPosition = approval.level === 0 ? (value.footerPosition || null) : null;
-    let signedPath = null;
-    try {
-      signedPath = await pdfService.overlayEsign(approval.document, approval, position, isFinalLevel, footerPosition);
-    } catch (pdfErr) {
-      logger.error('PDF overlay failed:', pdfErr);
-      return res.status(500).json({ success: false, message: 'Failed to process PDF signature', code: 'PDF_ERROR' });
+    // ── Level 0 membekukan keputusan, bukan menulis berkas ──────────────
+    //
+    // Yang disimpan adalah manifest: posisi QR, posisi & isi footer, berkas QR
+    // yang dipakai, sha256 sumbernya. Berkas hasil penempelannya dulu ditulis
+    // di sini dan disimpan selamanya, padahal isinya salinan utuh original.pdf
+    // yang bedanya cuma beberapa KB — 50% dari seluruh storage habis untuk itu.
+    // Sekarang berkasnya dirender saat diminta (~25 ms) dan hanya diarsipkan
+    // permanen ketika approval final tercapai.
+    let manifest = null;
+    if (isLevel0) {
+      try {
+        manifest = await pdfService.resolveStampManifest(
+          approval.document, position, value.footerPosition || null, req.user.id,
+        );
+      } catch (pdfErr) {
+        logger.error('Stamp manifest resolution failed:', pdfErr);
+        return res.status(500).json({ success: false, message: 'Failed to process PDF signature', code: 'PDF_ERROR' });
+      }
+    }
+
+    // ── Approval final menulis SATU arsip permanen ──────────────────────
+    //
+    // Inilah berkas yang harus bisa ditunjukkan bertahun-tahun kemudian dalam
+    // bentuk yang persis sama, jadi ia disimpan sungguhan — bukan dirender ulang
+    // setiap kali diminta.
+    let archivePath  = null;
+    let wroteArchive = false;
+    if (isFinalLevel) {
+      const effectiveManifest = manifest || approval.document.stampManifest;
+      try {
+        if (effectiveManifest) {
+          archivePath = await pdfService.writeFinalArchive(
+            { ...approval.document, stampManifest: effectiveManifest }, effectiveManifest,
+          );
+          wroteArchive = true;
+        } else {
+          // Dokumen lama, di-stamp sebelum manifest ada: berkas turunannya sudah
+          // di disk dan itulah arsipnya. Jangan dirender ulang — hasil render
+          // hari ini belum tentu sama dengan yang dulu benar-benar dicetak.
+          archivePath = approval.document.pathSignedLevel0;
+        }
+      } catch (pdfErr) {
+        logger.error('Final archive write failed:', pdfErr);
+        return res.status(500).json({ success: false, message: 'Failed to write final signed PDF', code: 'PDF_ERROR' });
+      }
     }
 
     try {
@@ -141,8 +207,10 @@ exports.approve = async (req, res, next) => {
             signedAt:       new Date(),
             notes:          value.notes,
             nextApproverId: value.nextApproverId || null,
-            pathSigned:     signedPath,
-            // qrPath already persisted above
+            // Hanya approval yang benar-benar menghasilkan berkas yang mengisi
+            // ini. Level 0 tidak lagi menulis apa pun, jadi nilainya null.
+            pathSigned:     archivePath,
+            qrPath:         approvalQrPath,
           },
         });
 
@@ -160,16 +228,17 @@ exports.approve = async (req, res, next) => {
           });
         }
 
-        if (approval.level === 0) {
+        if (isLevel0) {
+          const fp = value.footerPosition;
           const footerSettings = await pdfService.getSettings();
           const footerData = {
-            pageNumber: footerPosition?.pageNumber ?? footerSettings.footerDefaultPage,
-            xPercent:   footerPosition?.xPercent   ?? footerSettings.footerDefaultXPercent,
-            yPercent:   footerPosition?.yPercent   ?? footerSettings.footerDefaultYPercent,
-            widthPt:    footerPosition?.widthPt    ?? footerSettings.footerDefaultWidthPt,
-            heightPt:   footerPosition?.heightPt   ?? footerSettings.footerDefaultHeightPt,
-            fontSize:   footerPosition?.fontSize   ?? footerSettings.footerDefaultFontSize,
-            rotation:   footerPosition?.rotation   ?? footerSettings.footerDefaultRotation,
+            pageNumber: fp?.pageNumber ?? footerSettings.footerDefaultPage,
+            xPercent:   fp?.xPercent   ?? footerSettings.footerDefaultXPercent,
+            yPercent:   fp?.yPercent   ?? footerSettings.footerDefaultYPercent,
+            widthPt:    fp?.widthPt    ?? footerSettings.footerDefaultWidthPt,
+            heightPt:   fp?.heightPt   ?? footerSettings.footerDefaultHeightPt,
+            fontSize:   fp?.fontSize   ?? footerSettings.footerDefaultFontSize,
+            rotation:   fp?.rotation   ?? footerSettings.footerDefaultRotation,
           };
           await tx.documentFooterPosition.upsert({
             where:  { documentId: approval.documentId },
@@ -178,12 +247,18 @@ exports.approve = async (req, res, next) => {
           });
         }
 
+        // Hanya ada SATU berkas hasil penempelan, dan ia baru ditulis saat
+        // approval final. Nama kolom pathSignedLevel0/pathSignedFinal
+        // dipertahankan supaya dokumen lama tetap terbaca; untuk dokumen baru
+        // keduanya menunjuk berkas arsip yang sama.
         if (isFinalLevel) {
           const documentUpdateData = {
             status:          'APPROVED',
-            pathSignedFinal: signedPath,
+            pathSignedFinal: archivePath,
+            pathSignedLevel0: archivePath,
             tanggalApproval: new Date(),
           };
+          if (manifest) documentUpdateData.stampManifest = manifest;
           if (approval.level === 1) documentUpdateData.tanggalVerifikasi = new Date();
 
           await tx.document.update({
@@ -191,14 +266,16 @@ exports.approve = async (req, res, next) => {
             data: documentUpdateData,
           });
         } else {
-          const levelField = approval.level === 1 ? 'pathSignedLevel1' : `pathSignedLevel${approval.level}`;
-          const documentUpdateData = { [levelField]: signedPath };
+          const documentUpdateData = {};
+          if (manifest) documentUpdateData.stampManifest = manifest;
           if (approval.level === 1) documentUpdateData.tanggalVerifikasi = new Date();
 
-          await tx.document.update({
-            where: { id: approval.documentId },
-            data:  documentUpdateData,
-          });
+          if (Object.keys(documentUpdateData).length > 0) {
+            await tx.document.update({
+              where: { id: approval.documentId },
+              data:  documentUpdateData,
+            });
+          }
           await tx.documentApproval.create({
             data: {
               documentId: approval.documentId,
@@ -211,8 +288,11 @@ exports.approve = async (req, res, next) => {
         }
       });
     } catch (txErr) {
-      if (signedPath && fs.existsSync(signedPath)) {
-        try { fs.unlinkSync(signedPath); } catch (_) {}
+      // Hanya buang berkas yang transaksi ini sendiri tulis. Kalau archivePath
+      // menunjuk berkas turunan lama milik dokumen legacy, menghapusnya berarti
+      // menghancurkan arsip yang sah.
+      if (wroteArchive && archivePath && fs.existsSync(archivePath)) {
+        try { fs.unlinkSync(archivePath); } catch (_) {}
       }
       throw txErr;
     }
@@ -260,7 +340,7 @@ exports.decline = async (req, res, next) => {
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
 
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId, status: 'PENDING' },
+      where:   { id: req.params.approvalId, status: 'PENDING', document: { deletedAt: null } },
       include: { document: true },
     });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
@@ -302,7 +382,7 @@ exports.decline = async (req, res, next) => {
 exports.suggestedApprovers = async (req, res, next) => {
   try {
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId },
+      where:   { id: req.params.approvalId, document: { deletedAt: null } },
       include: { document: { include: { productCategory: true, footerPosition: true } } },
     });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
@@ -369,7 +449,9 @@ exports.reassign = async (req, res, next) => {
     const { error, value } = Joi.object({ newApproverId: Joi.string().uuid().required() }).validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
 
-    const approval = await prisma.documentApproval.findFirst({ where: { id: req.params.approvalId, status: 'PENDING' } });
+    const approval = await prisma.documentApproval.findFirst({
+      where: { id: req.params.approvalId, status: 'PENDING', document: { deletedAt: null } },
+    });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
 
     const newApprover = await prisma.user.findFirst({ where: { id: value.newApproverId, isActive: true } });
@@ -403,7 +485,7 @@ exports.reassign = async (req, res, next) => {
 exports.downloadQr = async (req, res, next) => {
   try {
     const approval = await prisma.documentApproval.findFirst({
-      where:   { id: req.params.approvalId },
+      where:   { id: req.params.approvalId, document: { deletedAt: null } },
       include: { document: true },
     });
     if (!approval) return res.status(404).json({ success: false, message: 'Approval not found' });
@@ -423,10 +505,10 @@ exports.downloadQr = async (req, res, next) => {
     }
 
     // ?preview=true — the approval screen asking "what will my stamp look like?".
-    // The stamped file only appears once approve() runs (generateApprovalQr →
-    // overlayEsign), so a PENDING approval has nothing on disk; render the same
-    // QR in memory instead of 404-ing. Without the flag the behaviour is
-    // unchanged: this endpoint hands back the actual stamped artifact, or 404.
+    // approval.qrPath only appears once approve() runs (generateApprovalQr), so
+    // a PENDING approval has nothing on disk; render the same QR in memory
+    // instead of 404-ing. Without the flag the behaviour is unchanged: this
+    // endpoint hands back the actual stored QR, or 404.
     const wantsPreview = req.query.preview === 'true';
     const hasStampedQr = !!approval.qrPath && fs.existsSync(approval.qrPath);
 

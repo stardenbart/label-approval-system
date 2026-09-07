@@ -1,7 +1,7 @@
 // frontend/src/pages/DocumentListPage.jsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import {
   Search,
   Upload,
@@ -13,6 +13,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import api           from '../services/api';
+import { qk } from '../services/queryKeys';
 import useAuthStore  from '../store/authStore';
 import { format }    from 'date-fns';
 
@@ -40,12 +41,12 @@ export default function DocumentListPage() {
   const [dateTo,    setDateTo]    = useState('');
 
   const { data: groupsData } = useQuery({
-    queryKey: ['product-groups'],
+    queryKey: qk.productGroups(),
     queryFn:  () => api.get('/products/groups').then(r => r.data.data),
   });
 
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['documents', page, search, status, groupId, dateField, dateFrom, dateTo],
+    queryKey: qk.documents({ page, search, status, groupId, dateField, dateFrom, dateTo }),
     queryFn:  () => api.get('/documents', {
       params: {
         page,
@@ -58,7 +59,11 @@ export default function DocumentListPage() {
         dateTo: dateTo || undefined,
       },
     }).then(r => r.data.data),
-    keepPreviousData: true,
+    // v5: opsi `keepPreviousData: true` milik v4 diabaikan diam-diam,
+    // sehingga daftar berkedip kosong tiap ganti halaman.
+    placeholderData: keepPreviousData,
+    // Orang lain bisa approve/upload sementara daftar ini terbuka.
+    refetchInterval: 60_000,
   });
 
   const items      = data?.items      || [];

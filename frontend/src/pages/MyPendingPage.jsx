@@ -1,15 +1,15 @@
 // frontend/src/pages/MyPendingPage.jsx
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery }    from '@tanstack/react-query';
 import { format }      from 'date-fns';
 import { Clock, CheckCircle } from 'lucide-react';
 import api from '../services/api';
+import { qk } from '../services/queryKeys';
 
 export default function MyPendingPage() {
   const navigate = useNavigate();
   const { data, isLoading } = useQuery({
-    queryKey: ['my-pending'],
+    queryKey: qk.myPending(),
     queryFn:  () => api.get('/documents/my-pending').then(r => r.data.data),
     refetchInterval: 30_000,
   });
