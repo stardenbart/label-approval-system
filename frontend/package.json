@@ -1,6 +1,6 @@
 {
   "name": "dal-frontend",
-  "version": "1.0.0",
+  "version": "2.0.0+build.20260907.8e9469c",
   "description": "Digital Approval Label System — Frontend",
   "type": "module",
   "scripts": {
