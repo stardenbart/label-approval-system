@@ -169,12 +169,35 @@ async function checkSchema() {
                   : fail(`kolom documents.${col} TIDAK ADA`, `jalankan "npx prisma migrate deploy" (${why})`);
   }
 
-  const applied = await prisma.$queryRawUnsafe(
-    'SELECT migration_name AS m, finished_at AS f FROM _prisma_migrations ORDER BY finished_at'
+  // Prisma MENYIMPAN percobaan yang gagal sebagai baris tersendiri: finished_at
+  // NULL dan rolled_back_at terisi. Migrasi yang sama biasanya muncul lagi di
+  // baris berikutnya dengan status sukses.
+  //
+  // Memperlakukan baris ber-rollback sebagai "belum selesai" membuat riwayat
+  // dibaca sebagai antrean. Di database produksi DAL ada tiga baris seperti itu
+  // — dua untuk _init dan satu untuk _drop_group_level_unique — padahal
+  // ketiganya sudah berhasil diterapkan ulang sesudahnya. Tanpa perbedaan ini,
+  // storage:doctor melaporkan GAGAL dan menghentikan deploy.sh di gerbangnya.
+  const rows = await prisma.$queryRawUnsafe(
+    `SELECT migration_name AS m, finished_at AS f, rolled_back_at AS rb
+       FROM _prisma_migrations ORDER BY started_at`
   ).catch(() => []);
-  const pending = applied.filter(r => !r.f);
-  if (pending.length) fail(`${pending.length} migrasi belum selesai`, pending.map(p => p.m).join(', '));
-  else                ok(`${applied.length} migrasi tercatat`, applied.at(-1)?.m || '-');
+
+  const pending    = rows.filter(r => !r.f && !r.rb);
+  const rolledBack = rows.filter(r => r.rb);
+  const done       = rows.filter(r => r.f);
+
+  if (pending.length) {
+    fail(`${pending.length} migrasi belum selesai`, pending.map(p => p.m).join(', '));
+  } else {
+    ok(`${done.length} migrasi diterapkan`, done.at(-1)?.m || '-');
+  }
+  if (rolledBack.length) {
+    // Bukan kegagalan: ini jejak sejarah. Tetap disebut supaya tidak
+    // mengagetkan orang yang membuka tabelnya sendiri.
+    info(`${rolledBack.length} percobaan gagal di masa lalu (sudah di-rollback)`,
+         [...new Set(rolledBack.map(r => r.m))].join(', '));
+  }
 }
 
 async function checkSettings() {
