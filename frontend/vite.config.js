@@ -17,11 +17,19 @@ export default defineConfig({
     // FIX-01: was 'process.env.NODE.ENV' — dot is invalid, must be underscore
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
   },
+  // Port dan target proxy bisa dioverride lewat environment supaya satu salinan
+  // kode bisa menjalankan dev dan staging berdampingan tanpa saling menimpa
+  // (lihat deploy/staging-local.sh). Tanpa env, nilainya persis seperti dulu.
+  //
+  // VITE_DEV_HOST=0.0.0.0 membuat server bisa dijangkau dari perangkat lain di
+  // jaringan yang sama — itu syarat untuk menguji pemindaian QR dengan ponsel,
+  // karena localhost pada ponsel menunjuk ke ponsel itu sendiri.
   server: {
-    port: 5173,
+    port: Number(process.env.VITE_DEV_PORT) || 5173,
+    host: process.env.VITE_DEV_HOST || 'localhost',
     proxy: {
       '/api': {
-        target:       'http://127.0.0.1:3001',
+        target:       process.env.VITE_API_TARGET || 'http://127.0.0.1:3001',
         changeOrigin: true,
         secure:       false,
       },
