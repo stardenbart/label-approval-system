@@ -21,8 +21,9 @@ ufw allow 80/tcp  comment "HTTP"
 ufw allow 443/tcp comment "HTTPS"
 
 # Block direct access to backend port from outside
-# (3001 only accessible via Nginx proxy on localhost)
-ufw deny 3001/tcp comment "Backend - internal only"
+# (3001/3101 only accessible via Nginx proxy on localhost)
+ufw deny 3001/tcp comment "Backend production - internal only"
+ufw deny 3101/tcp comment "Backend staging - internal only"
 
 # MySQL — only localhost (never expose to internet)
 ufw deny 3306/tcp comment "MySQL - internal only"
@@ -34,4 +35,4 @@ ufw status verbose
 echo ""
 echo "[UFW] ✅ Firewall configured"
 echo "      Open ports: 22 (SSH), 80 (HTTP), 443 (HTTPS)"
-echo "      Blocked: 3001 (backend), 3306 (MySQL)"
+echo "      Blocked: 3001 + 3101 (backend), 3306 (MySQL)"

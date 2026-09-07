@@ -1,5 +1,4 @@
 // frontend/src/App.jsx
-import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import useAuthStore from './store/authStore';
 

@@ -106,7 +106,9 @@ function drawText(page, text, x, y, font, size, color = rgb(0,0,0), maxWidth) {
 // ─── Part 1: Summary page ─────────────────────────────────────────
 async function drawSummaryPage(pdfDoc, fontReg, fontBold, form, document, A4) {
   const [pageW, pageH] = A4;
-  const page = pdfDoc.addPage(A4);
+  // `let`, bukan `const` — tabel parameter bisa meluber ke halaman berikutnya
+  // dan harus benar-benar berpindah ke sana (lihat loop di bawah).
+  let page = pdfDoc.addPage(A4);
   let y = pageH - MARGIN;
 
   // Title
@@ -144,7 +146,6 @@ async function drawSummaryPage(pdfDoc, fontReg, fontBold, form, document, A4) {
 
   // Table
   const col1W = 360;
-  const col2W = 80;
   // Header row
   page.drawRectangle({ x:MARGIN, y:y-2, width:pageW-2*MARGIN, height:LINE_H+4, color:rgb(0.85,0.85,0.95) });
   page.drawText('Parameter', { x:MARGIN+4, y:y+2, font:fontBold, size:FONT_MD });
@@ -164,9 +165,11 @@ async function drawSummaryPage(pdfDoc, fontReg, fontBold, form, document, A4) {
     if (result.status === 'OK') okCount++; else ngCount++;
 
     if (y < MARGIN + 60) {
-      // New page if running out of space
-      const newPage = pdfDoc.addPage(A4);
-      y = A4[1] - MARGIN;
+      // Halaman baru dulu dibuat lalu diabaikan (`const newPage = ...`), sehingga
+      // baris berikutnya tetap digambar di halaman lama dengan y yang sudah
+      // di-reset ke atas — teks bertumpuk, dan halaman kosong ikut terlampir.
+      page = pdfDoc.addPage(A4);
+      y    = pageH - MARGIN;
     }
   }
 

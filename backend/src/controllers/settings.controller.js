@@ -4,28 +4,27 @@
 const Joi    = require('joi');
 const { prisma } = require('../config/prisma');
 const auditService = require('../services/audit.service');
+const { SETTING_DEFAULTS, QR_SIZE_LIMIT_PT, QR_SIZE_ADVISORY_MIN_PT, FOOTER_SIZE_LIMIT_PT,
+        ARCHIVE_COMPRESSION_PRESETS } = require('../config/stamp');
 
-const DEFAULTS = {
-  qr_default_width_pt:  '100',
-  qr_default_height_pt: '100',
-  qr_default_page:      '1',
-  qr_default_x_percent: '85',
-  qr_default_y_percent: '5',
-  qr_min_width_pt:      '60',
-  qr_max_width_pt:      '200',
-  footer_default_x_percent: '3',
-  footer_default_y_percent: '97',
-  footer_default_width_pt:  '220',
-  footer_default_height_pt: '30',
-  footer_default_page:      '1',
-  footer_default_font_size: '7',
-  footer_default_rotation:  '0',
-};
+const DEFAULTS = SETTING_DEFAULTS;
 
 exports.getAll = async (req, res, next) => {
   try {
     const rows = await prisma.systemSetting.findMany();
     const data = Object.fromEntries(rows.map(r => [r.key, r.value]));
+
+    // Batas teknis ikut dikirim supaya frontend tidak perlu menyalin angkanya
+    // sendiri — dulu form System Settings dan kanvas e-sign masing-masing punya
+    // min/max hardcoded yang diam-diam berbeda dari server.
+    data.limits = {
+      qrMinPt:        QR_SIZE_LIMIT_PT.min,
+      qrMaxPt:        QR_SIZE_LIMIT_PT.max,
+      qrAdvisoryMinPt: QR_SIZE_ADVISORY_MIN_PT,
+      footer:          FOOTER_SIZE_LIMIT_PT,
+      compressionPresets: ARCHIVE_COMPRESSION_PRESETS,
+    };
+
     res.json({ success: true, data });
   } catch (err) { next(err); }
 };
@@ -33,13 +32,13 @@ exports.getAll = async (req, res, next) => {
 exports.update = async (req, res, next) => {
   try {
     const schema = Joi.object({
-      qr_default_width_pt:  Joi.number().min(60).max(200),
-      qr_default_height_pt: Joi.number().min(60).max(200),
+      qr_default_width_pt:  Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max),
+      qr_default_height_pt: Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max),
       qr_default_page:      Joi.number().integer().min(1),
       qr_default_x_percent: Joi.number().min(0).max(100),
       qr_default_y_percent: Joi.number().min(0).max(100),
-      qr_min_width_pt:      Joi.number().min(20).max(100),
-      qr_max_width_pt:      Joi.number().min(100).max(400),
+      qr_min_width_pt:      Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max),
+      qr_max_width_pt:      Joi.number().min(QR_SIZE_LIMIT_PT.min).max(QR_SIZE_LIMIT_PT.max),
       footer_default_x_percent: Joi.number().min(0).max(100),
       footer_default_y_percent: Joi.number().min(0).max(100),
       footer_default_width_pt:  Joi.number().min(50).max(400),
@@ -47,9 +46,34 @@ exports.update = async (req, res, next) => {
       footer_default_page:      Joi.number().integer().min(1),
       footer_default_font_size: Joi.number().min(5).max(24),
       footer_default_rotation:  Joi.number().valid(0, 90, 180, 270),
+      // Satu-satunya setting yang bukan angka — jangan ikutkan ke num() di bawah.
+      archive_compression_preset: Joi.string().valid(...ARCHIVE_COMPRESSION_PRESETS),
     });
     const { error, value } = schema.validate(req.body);
     if (error) return res.status(400).json({ success: false, message: error.details[0].message });
+
+    // Rentang kebijakan harus tetap masuk akal terhadap dirinya sendiri. Nilai
+    // yang tidak dikirim diambil dari yang tersimpan, supaya mengubah salah satu
+    // saja tetap tervalidasi terhadap pasangannya.
+    const stored  = Object.fromEntries((await prisma.systemSetting.findMany()).map(r => [r.key, r.value]));
+    const num     = (k) => parseFloat(value[k] ?? stored[k] ?? DEFAULTS[k]);
+    const minW    = num('qr_min_width_pt');
+    const maxW    = num('qr_max_width_pt');
+    if (minW > maxW) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum width (${minW}pt) tidak boleh lebih besar dari maximum width (${maxW}pt)`,
+      });
+    }
+    for (const k of ['qr_default_width_pt', 'qr_default_height_pt']) {
+      const v = num(k);
+      if (v < minW || v > maxW) {
+        return res.status(400).json({
+          success: false,
+          message: `${k} (${v}pt) harus berada di antara minimum ${minW}pt dan maximum ${maxW}pt`,
+        });
+      }
+    }
 
     for (const [key, val] of Object.entries(value)) {
       await prisma.systemSetting.upsert({

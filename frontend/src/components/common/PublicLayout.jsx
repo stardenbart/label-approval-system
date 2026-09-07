@@ -1,7 +1,5 @@
 // frontend/src/components/common/PublicLayout.jsx
-import React from 'react';
 import { Outlet } from 'react-router-dom';
-import { Shield } from 'lucide-react';
 
 export default function PublicLayout() {
   return (
