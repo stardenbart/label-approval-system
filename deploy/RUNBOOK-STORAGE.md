@@ -52,12 +52,16 @@ kejutan, dan itu tidak ada di data contoh.
 sudo bash deploy/backup.sh
 # di staging
 gunzip -c dal_db_*.sql.gz | mysql -u root -p dal_db
-tar -xzHf dal_storage_*.tar.gz -C /var/www/dal-system/backend/storage/
+tar -xzf dal_storage_*.tar.gz -C /var/www/dal-system/backend/storage/
 ```
 
-`-H` pada extract sama pentingnya dengan pada create. Tanpa itu, staging berjalan
-di atas storage tanpa tautan dan Fase 1 seolah-olah menghemat jauh lebih banyak
-daripada yang sebenarnya terjadi di produksi.
+tar mempertahankan hard link secara bawaan, baik saat membuat maupun
+mengekstrak — **jangan** menambahkan `-H`, karena pada GNU tar itu berarti
+`--format` dan perintahnya gagal dengan `f: Invalid archive format`. Yang
+merusak tautan adalah `--hard-dereference`.
+
+Untuk **rsync** ceritanya berbeda: di sana `-H` MEMANG wajib, karena rsync tidak
+mempertahankan hard link kecuali diminta.
 
 Jalankan seluruh runbook di staging sampai selesai. Baru sentuh produksi.
 
@@ -84,10 +88,12 @@ periksa beberapa.
 karena hard link tidak mengubah isi berkas sama sekali, cukup salin ulang tiap
 berkas ke dirinya sendiri (`cp x x.tmp && mv x.tmp x`) untuk memutus tautannya.
 
-**Setelah ini berlaku selamanya:** setiap backup berkas WAJIB memakai `tar -H`
-atau `rsync -H`. Tanpa itu, tautan mekar jadi salinan penuh dan penghematannya
-hilang di arsip. `deploy/backup.sh` sudah benar; skrip backup lain yang mungkin
-kamu punya belum tentu.
+**Setelah ini berlaku selamanya:** setiap penyalinan berkas harus
+mempertahankan hard link. `tar` sudah melakukannya sendiri; `rsync` **tidak** —
+di sana `-H` wajib ditambahkan. Tanpa itu tautan mekar jadi salinan penuh dan
+penghematannya hilang di arsip. Perhatikan juga `deploy.sh`: ia memakai
+`rsync --delete` untuk kode, tapi mengecualikan `storage/`, jadi berkas dokumen
+tidak pernah lewat sana.
 
 ---
 

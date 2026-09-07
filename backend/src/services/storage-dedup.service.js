@@ -26,8 +26,10 @@
  *     akan terlihat oleh semua dokumen yang berbagi inode. Di DAL, original.pdf
  *     memang tidak pernah diubah setelah upload — hasil penempelan ditulis ke
  *     berkas terpisah (signed_level0.pdf). Jangan langgar itu.
- *   - Saat backup, pakai `tar -H`/`rsync -H`; tanpa itu link mekar lagi jadi
- *     salinan penuh dan penghematannya hilang di arsip.
+ *   - Saat menyalin, hard link harus dipertahankan. `tar` melakukannya sendiri
+ *     (jangan tambahkan -H: pada GNU tar itu --format dan perintahnya gagal).
+ *     `rsync` TIDAK melakukannya sendiri — di sana `-H` wajib. Tanpa itu link
+ *     mekar jadi salinan penuh dan penghematannya hilang di arsip.
  */
 
 const fs     = require('fs');

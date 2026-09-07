@@ -14,9 +14,9 @@
  *   node scripts/dedupe-storage.js            # dry run — hanya melaporkan
  *   node scripts/dedupe-storage.js --apply    # benar-benar menautkan
  *
- * Sebelum --apply di produksi: backup database dan pastikan backup berkas
- * memakai tar -H / rsync -H, kalau tidak hard link akan mekar lagi jadi
- * salinan penuh di arsip.
+ * Sebelum --apply di produksi: backup database DAN berkasnya. tar sudah
+ * mempertahankan hard link secara bawaan; rsync TIDAK — di sana -H wajib.
+ * Tanpa itu tautan mekar lagi jadi salinan penuh di arsip.
  */
 
 require('dotenv').config();

@@ -26,6 +26,10 @@
 #   --single-transaction Dump diambil dari satu snapshot konsisten tanpa
 #                        mengunci tabel, jadi aplikasi tetap melayani permintaan
 #                        selama backup berjalan.
+#
+#   --no-tablespaces     User aplikasi tidak punya privilege PROCESS, dan
+#                        informasi tablespace tidak dibutuhkan untuk memulihkan.
+#                        Tanpa ini mysqldump berhenti dengan "Access denied".
 # =============================================================================
 
 set -euo pipefail
@@ -84,7 +88,7 @@ DB_FILE="${BACKUP_DIR}/dal_db_${STAMP}.sql.gz"
 echo "[1/3] Dump database..."
 MYSQL_PWD="${DB_PASS}" mysqldump \
   -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USER}" \
-  --single-transaction --routines --triggers --events \
+  --single-transaction --routines --triggers --events --no-tablespaces \
   --default-character-set=utf8mb4 \
   "${DB_NAME}" | gzip > "${DB_FILE}"
 
@@ -107,14 +111,16 @@ if [ "${DB_ONLY}" = false ]; then
   fi
   FILES_FILE="${BACKUP_DIR}/dal_storage_${STAMP}.tar.gz"
 
-  # -H mempertahankan hard link. Cache sengaja tidak ikut: isinya bisa dibuat
-  # ulang dan hanya membuat arsipnya besar tanpa guna.
-  tar -czHf "${FILES_FILE}" \
+  # Hard link dipertahankan tar secara bawaan — JANGAN tambahkan -H, karena
+  # pada GNU tar itu berarti --format dan perintahnya gagal. Cache sengaja
+  # tidak ikut: isinya bisa dibuat ulang dan hanya membuat arsipnya besar.
+  tar -czf "${FILES_FILE}" \
       --exclude='cache' \
       -C "$(dirname "${STORAGE_DIR}")" "$(basename "${STORAGE_DIR}")"
 
   LINKS=$(tar -tvzf "${FILES_FILE}" | grep -c "^h" || true)
-  echo "  OK — $(du -h "${FILES_FILE}" | cut -f1), ${LINKS} hard link dipertahankan"
+  PDFS=$(tar -tzf "${FILES_FILE}" | grep -c "\.pdf$" || true)
+  echo "  OK — $(du -h "${FILES_FILE}" | cut -f1), ${PDFS} PDF, ${LINKS} hard link dipertahankan"
 else
   echo "[2/3] Berkas dilewati (--db-only)"
 fi

@@ -109,8 +109,10 @@ salah satu dokumen meninggalkan kembarannya utuh byte-per-byte.
 > 1. `tmp` dan `documents` **harus satu filesystem** — hard link tidak bisa
 >    lintas partisi, dan `linkOrMove()` akan jatuh ke salinan penuh (EXDEV)
 >    tanpa satu pun error.
-> 2. Backup **wajib** memakai `tar -H` / `rsync -H`. Tanpa itu tautan mekar
->    jadi salinan penuh dan penghematannya hilang di arsip.
+> 2. Penyalinan berkas harus mempertahankan hard link. `tar` melakukannya
+>    sendiri — **jangan** tambahkan `-H`, karena pada GNU tar itu `--format`
+>    dan perintahnya gagal. `rsync` **tidak** melakukannya sendiri; di sana
+>    `-H` wajib.
 
 **Berkas:** `storage-dedup.service.js`, `scripts/dedupe-storage.js`,
 migrasi `20260904100000_add_original_sha256`
@@ -353,8 +355,9 @@ Keluar dengan kode 1 kalau ada yang gagal, jadi bisa jadi gerbang di
 DAL sebelumnya **tidak punya backup otomatis sama sekali**, padahal ketiga fase
 penyimpanan mengubah berkas secara permanen.
 
-- `tar -H` mempertahankan hard link — diuji: 5 tautan bertahan, dan setelah
-  extract 3 dan 4 berkas tetap berbagi inode (14,30 MB logis → 10,56 MB fisik)
+- Hard link dipertahankan tar secara bawaan — diuji di server produksi (GNU
+  tar 1.34): 3 berkas tetap berbagi inode setelah extract, 200 KB fisik alih-alih
+  600 KB. Flag `-H` justru menggagalkan perintah di GNU tar (`--format`)
 - `--single-transaction` — snapshot konsisten tanpa mengunci tabel
 - dump terpotong tetap menghasilkan `.gz` yang tampak wajar, jadi skrip
   memverifikasi baris `Dump completed` dan menghitung tabel sebelum menyatakan
@@ -620,9 +623,9 @@ sudah dicetak menunjuk ke alamat yang tidak ada, dan itu tidak bisa diperbaiki
 tanpa cetak ulang. Periksa sebelum dokumen pertama di-approve di lingkungan
 baru.
 
-**Backup wajib `-H`.** Setelah Fase C berlaku, setiap backup berkas tanpa
-`tar -H` / `rsync -H` akan memekarkan tautan jadi salinan penuh.
-`deploy/backup.sh` sudah benar; skrip backup lain belum tentu.
+**Penyalinan harus mempertahankan hard link.** Setelah Fase C berlaku, menyalin tanpa
+hard link akan mekar jadi salinan penuh. `tar` sudah benar sendiri; yang perlu
+diwaspadai adalah `rsync` tanpa `-H`.
 
 **`storage/cache/stamped/` bukan data.** `rm -rf` di sana tidak menghilangkan
 apa pun, hanya membuat permintaan berikutnya perlu ~25 ms lebih lama. Dibersihkan

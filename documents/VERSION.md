@@ -35,7 +35,7 @@ berjalan, jadi label tidak perlu dicetak ulang.
 - Kompresi arsip dengan Ghostscript (−58%, resolusi gambar tidak berubah)
 - `GET /documents/:id/signed?quality=full` — versi mutu penuh
 - `npm run storage:doctor` — pemeriksaan kesiapan penyimpanan
-- `deploy/backup.sh` — backup database + berkas (`tar -H`)
+- `deploy/backup.sh` — backup database + berkas, hard link dipertahankan
 - `deploy/staging-local.sh` — staging terisolasi di mesin pengembang
 - 51 test otomatis (36 backend Jest, 15 frontend Vitest)
 
