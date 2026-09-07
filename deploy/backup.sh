@@ -2,9 +2,9 @@
 # =============================================================================
 # deploy/backup.sh — Backup DAL: database + berkas dokumen
 #
-#   sudo bash deploy/backup.sh                    # backup penuh
-#   sudo bash deploy/backup.sh --db-only          # database saja (cepat)
-#   BACKUP_DIR=/mnt/nas/dal bash deploy/backup.sh # tujuan lain
+#   sudo bash deploy/backup.sh production
+#   sudo bash deploy/backup.sh staging --db-only
+#   APP_DIR=/path BACKUP_DIR=/mnt/nas/dal bash deploy/backup.sh   # manual/dev
 #
 # WAJIB dijalankan sebelum:
 #   - npx prisma migrate deploy
@@ -30,7 +30,15 @@
 
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-/var/www/dal-system}"
+# Lingkungan menentukan folder aplikasi, folder backup, dan berkas .env mana
+# yang dibaca. Nilai apa pun yang sudah ada di environment tetap menang, supaya
+# skrip ini bisa dipakai di mesin dev untuk menguji.
+if [ -z "${APP_DIR:-}" ]; then
+  # shellcheck source=env.sh
+  source "$(dirname "$0")/env.sh" "${1:-}"
+  shift || true
+fi
+
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/dal}"
 STORAGE_DIR="${STORAGE_DIR:-${APP_DIR}/backend/storage/documents}"
 ENV_FILE="${ENV_FILE:-${APP_DIR}/backend/.env}"

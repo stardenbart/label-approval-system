@@ -13,7 +13,7 @@ module.exports = {
   env: {
     node:   true,
     es2022: true,
-    jest:   true,   // supertest + jest sudah terpasang; test-nya menyusul
+    jest:   true,   // tests/ memakai jest + supertest
   },
   parserOptions: {
     ecmaVersion: 'latest',

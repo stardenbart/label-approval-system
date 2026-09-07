@@ -3,14 +3,16 @@
 # deploy/setup.sh
 # DAL System — Full Ubuntu Server Setup Script
 # Tested on Ubuntu 22.04 LTS
-# Run as root: sudo bash setup.sh
+# Run as root: sudo bash setup.sh <production|staging>
 # =============================================================================
 
 set -euo pipefail
 
 # ─── Config — Edit before running ────────────────────────────────────────────
-APP_DIR="/var/www/dal-system"
-DB_NAME="dal_db"
+# APP_DIR, DB_NAME, dan port datang dari env.sh supaya satu mesin bisa
+# menampung produksi dan staging berdampingan tanpa saling menimpa.
+# shellcheck source=env.sh
+source "$(dirname "$0")/env.sh" "${1:-}"
 DB_USER="dal_user"
 DB_PASS="CHANGE_THIS_STRONG_DB_PASSWORD"
 DOMAIN="dal.yourdomain.com"        # or server IP for internal use
@@ -82,7 +84,7 @@ mkdir -p ${APP_DIR}/backend/storage/{documents,tmp,tmp_img}
 mkdir -p ${APP_DIR}/backend/storage/cache/stamped
 mkdir -p ${APP_DIR}/backend/logs
 mkdir -p /var/log/dal
-mkdir -p /var/backups/dal
+mkdir -p ${BACKUP_DIR}
 
 # Create dal system user
 if ! id "dalapp" &>/dev/null; then
@@ -93,8 +95,8 @@ chmod -R 750 ${APP_DIR}
 chmod -R 770 ${APP_DIR}/backend/storage
 chmod -R 770 ${APP_DIR}/backend/logs
 chmod -R 770 /var/log/dal
-chown -R dalapp:www-data /var/backups/dal
-chmod 700 /var/backups/dal            # backup berisi hash password dan token
+chown -R dalapp:www-data ${BACKUP_DIR}
+chmod 700 ${BACKUP_DIR}            # backup berisi hash password dan token
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -121,10 +123,10 @@ echo "  4. Periksa kesiapan penyimpanan:"
 echo "     cd ${APP_DIR}/backend && npm run storage:doctor"
 echo ""
 echo "  5. Pasang backup harian ke cron:"
-echo "     echo '0 1 * * * root bash ${APP_DIR}/deploy/backup.sh >> /var/log/dal/backup.log 2>&1' > /etc/cron.d/dal-backup"
+echo "     echo '0 1 * * * root bash ${APP_DIR}/deploy/backup.sh ${DAL_ENV} >> /var/log/dal/backup.log 2>&1' > /etc/cron.d/dal-backup"
 echo ""
-echo "  6. Configure Nginx (run: sudo bash deploy/nginx.sh)"
-echo "  7. Configure PM2 (run: sudo bash deploy/pm2.sh)"
+echo "  6. Configure Nginx (run: sudo bash deploy/nginx.sh ${DAL_ENV} <domain>)"
+echo "  7. Configure PM2 (run: sudo bash deploy/pm2.sh ${DAL_ENV})"
 echo "  8. Configure Firewall (run: sudo bash deploy/firewall.sh)"
 echo ""
 echo "DB_NAME: ${DB_NAME}"

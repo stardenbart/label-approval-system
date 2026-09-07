@@ -417,11 +417,75 @@ dideklarasikan di dalam blok `if` pada `seed.js`.
 
 ---
 
+## I. Pemisahan staging dan produksi
+
+**Jebakan yang ditemukan.** `deploy.sh` menerima argumen `staging` dan mencetak
+"Deploy to staging", tetapi argumen itu **tidak pernah dipakai untuk apa pun
+selain teks**:
+
+```bash
+ENV="${1:-production}"                             # baris 8  — argumen diterima
+echo "Deploy to ${ENV}"                            # baris 14 — HANYA mencetak
+APP_DIR="/var/www/dal-system"                      # selalu produksi
+pm2 reload ecosystem.config.js --env production    # selalu produksi
+```
+
+Artinya `bash deploy/deploy.sh staging` **men-deploy ke produksi**: menimpa
+berkasnya, menjalankan migrasi di database produksi, dan me-restart aplikasi
+yang sedang dipakai orang — sambil menampilkan kata "staging" di layar.
+
+**Yang diterapkan.** `deploy/env.sh` jadi satu-satunya tempat yang menentukan
+lingkungan:
+
+| | production | staging |
+|---|---|---|
+| folder | `/var/www/dal-system` | `/var/www/dal-system-staging` |
+| proses PM2 | `dal-backend` | `dal-backend-staging` |
+| port | 3001 | 3101 |
+| backup | `/var/backups/dal` | `/var/backups/dal-staging` |
+| database | `dal_db` | `dal_db_staging` |
+| instance PM2 | 2 (cluster) | 1 |
+
+Di-source oleh `deploy.sh`, `pm2.sh`, `nginx.sh`, `backup.sh`, dan `setup.sh`.
+`ecosystem.config.js` membaca `DAL_ENV` dan **menolak jalan** kalau tidak
+disetel — tidak menebak. Berkas site Nginx dan berkas lognya juga dipisah per
+lingkungan, dan port 3101 ikut ditutup di `firewall.sh`.
+
+Tiga penjagaan baru:
+
+1. **Tidak ada nilai bawaan.** Lupa argumen → skrip berhenti, bukan mengenai
+   produksi.
+2. **Lingkungan tak dikenal ditolak.** `deploy.sh produksi` (salah eja) berhenti.
+3. **Produksi minta konfirmasi.** Harus mengetik `production` untuk melanjutkan;
+   `CONFIRM=yes` melewatinya untuk CI, tapi harus disengaja.
+
+## J. Test otomatis
+
+Sebelumnya **nol** berkas test meski Jest dan supertest sudah terpasang.
+Sekarang 51 test, semuanya lolos, sengaja diarahkan ke logika yang kalau rusak
+**merusak berkas orang tanpa bersuara**:
+
+| Berkas | Test | Yang dijaga |
+|---|---|---|
+| `tests/storage-dedup.test.js` | 7 | hash, penautan inode, penolakan saat ukuran beda, hapus satu tautan tidak menyentuh kembarannya |
+| `tests/stamp-manifest.test.js` | 9 | render deterministik, tidak menulis ke disk, `original.pdf` tidak berubah, versi manifest asing ditolak, `stampedAt` tidak mengubah kunci cache |
+| `tests/pdf-compress.test.js` | 5 | preset asing ditolak, `none` tidak menyentuh berkas, gs hilang ditangani anggun |
+| `tests/pdf-fingerprint.test.js` | 6 | perbedaan halaman/ukuran/gambar/teks tertangkap |
+| `tests/stamp-config.test.js` | 9 | min < max, default di dalam rentang, rotasi valid, konversi pt↔mm |
+| `PublicVerify/__tests__/status.test.js` | 15 | hanya APPROVED yang boleh hijau, "terverifikasi" hanya saat benar, divergensi selalu diperingatkan |
+
+Backend memakai Jest (`npm test`), frontend Vitest (`npm test`). Test tidak
+menyentuh database maupun storage sungguhan; berkas sementara dibuat per test
+dan dibersihkan sendiri.
+
+---
+
 ## Perkakas baru
 
 ```bash
 # Backend
-npm run lint                                    # ESLint
+npm run lint                                    # ESLint (src, prisma, tests)
+npm test                                        # Jest — 36 test
 npm run storage:doctor                          # kesiapan penyimpanan
 npm run storage:dedupe        [-- --apply]      # dedup hard link
 npm run storage:manifest      [-- --apply]      # isi stamp_manifest
@@ -431,9 +495,15 @@ npm run storage:compress      [-- --apply]      # kompresi arsip
 node scripts/seed-dummy-users.js                # akun uji (menolak di produksi)
 
 # Deploy
-bash deploy/backup.sh         [--db-only]
-bash deploy/staging-local.sh  {up|down|reset|status|logs}
-bash deploy/deploy.sh         [production|staging]
+bash deploy/backup.sh         <production|staging> [--db-only]
+bash deploy/staging-local.sh  {up|down|reset|status|logs}   # staging di laptop
+bash deploy/deploy.sh         <production|staging>          # WAJIB disebutkan
+bash deploy/pm2.sh            <production|staging>
+bash deploy/nginx.sh          <production|staging> [domain]
+bash deploy/setup.sh          <production|staging>
+
+# Frontend
+npm test                                        # Vitest — 15 test
 ```
 
 ## Endpoint baru
@@ -459,10 +529,12 @@ backend/scripts/backfill-stamp-manifest.js      backfill manifest
 backend/scripts/compress-archives.js            backfill kompresi
 backend/scripts/seed-dummy-users.js             akun uji
 backend/.eslintrc.cjs / .eslintignore
+backend/jest.config.cjs + tests/               36 test backend
 frontend/src/components/PublicVerify/index.jsx  komponen halaman publik bersama
 frontend/src/components/PublicVerify/status.js  logika status, bisa diuji
 frontend/src/services/queryKeys.js              registry kunci React Query
 frontend/src/services/cacheSync.js              invalidasi cache terpusat
+deploy/env.sh                                   resolusi lingkungan, satu sumber
 deploy/backup.sh                                backup DB + berkas
 deploy/staging-local.sh                         staging lokal terisolasi
 deploy/RUNBOOK-STORAGE.md                       runbook migrasi penyimpanan
@@ -560,7 +632,8 @@ sendiri tiap hari 03:30.
 peringatan. Artinya kalau lupa memasangnya, Fase E tampak berjalan tapi tidak
 menghemat apa pun. `storage:doctor` menyebutkan ini.
 
-**Belum ada satu pun test otomatis.** Jest dan supertest terpasang sebagai
-devDependency dan script `npm test` ada, tetapi tidak ada berkas
-`*.test.js` / `*.spec.js` di backend maupun frontend. Seluruh verifikasi di
-laporan ini dilakukan manual dan lewat skrip sekali pakai.
+**Cakupan test masih sempit.** Ada 51 test (36 backend, 15 frontend) yang
+menutup logika paling berbahaya — penautan hard link, determinisme manifest,
+penjagaan sebelum arsip ditimpa, dan aturan tampilan status. Yang BELUM ada:
+test integrasi HTTP (supertest terpasang tapi belum dipakai) dan test komponen
+React. Verifikasi alur upload → L0 → L1 → L2 masih manual.
