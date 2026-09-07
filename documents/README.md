@@ -20,15 +20,16 @@ dal-system/
 │   │   ├── middleware/        ← auth, roleCheck, upload, rateLimiter, errorHandler
 │   │   ├── routes/           ← Express routers
 │   │   └── services/         ← pdf, qr, email, audit, notification, id-generator, label-check-report
+│   ├── scripts/              ← Perkakas penyimpanan (lihat IMPLEMENTATION_REPORT.md)
 │   ├── storage/              ← Uploaded files (NOT in git)
-│   │   └── documents/{uuid}/ ← Per-document storage
-│   │       ├── original.pdf
-│   │       ├── signed_level1.pdf
-│   │       ├── signed_final.pdf
-│   │       ├── qr_original.png
-│   │       ├── qr_esign.png
-│   │       ├── label_check_report.pdf
-│   │       └── remarks/      ← NG remarks images
+│   │   ├── documents/{uuid}/ ← Per-document storage
+│   │   │   ├── original.pdf          ← TIDAK PERNAH diubah; bisa berupa hard link
+│   │   │   ├── signed_level0.pdf     ← arsip; hanya ada untuk dokumen APPROVED
+│   │   │   ├── qr_original.png       ← QR yang ditempel ke PDF
+│   │   │   ├── qr_approval_level*.png ← QR telusur per level; TIDAK ditempel
+│   │   │   ├── label_check_report.pdf
+│   │   │   └── remarks/      ← NG remarks images
+│   │   └── cache/stamped/    ← cache PDF ber-stamp; boleh dihapus kapan saja
 │   ├── .env.example
 │   └── package.json
 │
@@ -224,3 +225,16 @@ mysql -u dal_user -p dal_db -e "SHOW TABLES;"
 pm2 reload dal-backend
 sudo systemctl reload nginx
 ```
+
+---
+
+## Dokumen lain di folder ini
+
+| Berkas | Isi |
+|---|---|
+| `IMPLEMENTATION_REPORT.md` | Apa saja yang sudah diterapkan pada branch ini — penyimpanan, QR, kesiapan produksi — beserta angka pengukurannya |
+| `QA_REPORT.md` | Temuan QA / keamanan / bug |
+| `dal_prd_v1.md` | Product requirement document |
+
+Runbook migrasi penyimpanan (urutan staging → produksi, gerbang verifikasi, dan
+jalan pulang tiap fase) ada di `deploy/RUNBOOK-STORAGE.md`.
