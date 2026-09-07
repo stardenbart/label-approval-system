@@ -129,11 +129,16 @@ melainkan jumlah halaman, ukuran halaman, jumlah gambar, dan teks.
 **Sebagian dokumen akan sengaja TIDAK cocok.** Ada tiga sebab, dan ketiganya
 benar:
 
-| Pesan | Artinya |
-|---|---|
-| `jumlah gambar 3 vs 2` | Di-stamp sebelum aturan "satu QR per dokumen"; berkasnya memuat QR per level |
-| `isi gambar berbeda (…)` | Jumlah QR-nya sama, tapi **tujuannya berbeda** — berkas lama menunjuk `/e/approval/<id>`, render baru `/e/<dokumen>` |
-| `manifest hasil backfill` | Manifest disusun ulang oleh skrip, bukan direkam saat penempelan |
+| Pesan | Artinya | Jumlah di produksi |
+|---|---|---|
+| `jumlah gambar N vs M` | Di-stamp sebelum aturan "satu QR per dokumen"; berkasnya memuat QR per level | **37** |
+| `isi gambar berbeda (…)` | Jumlah QR-nya sama, tapi **tujuannya berbeda** — berkas lama menunjuk `/e/approval/<id>`, render baru `/e/<dokumen>` | **13** |
+| `halaman N: teks berbeda` | Di-stamp sebelum fitur footer ada (Juli 2026); arsipnya **tidak punya footer sama sekali**, render baru akan menambahkannya | **8** |
+| `manifest hasil backfill` | Manifest disusun ulang oleh skrip, bukan direkam saat penempelan | semua 58 |
+
+Angka di atas bukan perkiraan — itu hasil menjalankan `--verify` terhadap
+salinan data produksi (58 dokumen) pada 7 September 2026. **Semuanya ditolak,
+tidak ada satu pun yang cocok.**
 
 Baris kedua itu yang paling halus dan paling berbahaya. Dokumen yang berhenti
 di Level 0 hanya membawa **satu** QR, jadi strukturnya identik dengan hasil
@@ -145,6 +150,12 @@ seperti itu.
 **Berkas yang tidak cocok dipertahankan.** Itu bukan sampah — itu satu-satunya
 salinan dari apa yang sungguh-sungguh tercetak, dan tidak bisa dibuat ulang.
 Jangan dipaksa dengan `--force` tanpa alasan tertulis.
+
+> **Harapan yang realistis untuk produksi.** Dari 475,7 MB, yang benar-benar
+> berkurang hanyalah **41,2 MB dari dedup**. Ke-324 MB berkas turunan tetap ada,
+> dan itu BENAR: ketiganya di atas membuktikan berkas-berkas itu membawa sesuatu
+> yang tidak bisa dihasilkan ulang. Penghematan 38% dan 58% berlaku untuk
+> dokumen BARU, bukan untuk 58 dokumen yang sudah ada.
 
 > **Verifikasi adalah gerbang SEBELUM kompresi.** Arsip yang sudah dikompresi
 > Ghostscript tidak akan pernah cocok dengan render segar — gambarnya sudah
