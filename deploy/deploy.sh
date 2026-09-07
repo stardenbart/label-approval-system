@@ -42,8 +42,9 @@ echo "  ✅ Frontend built: dist/"
 
 # ─── Step 2: Copy Frontend to server ──────────────────────────────
 echo "[2/6] Deploying frontend..."
-rsync -av --delete "${PROJECT_ROOT}/frontend/dist/" "${APP_DIR}/frontend/"
-echo "  ✅ Frontend deployed to ${APP_DIR}/frontend/"
+mkdir -p "${APP_DIR}/frontend/dist"
+rsync -av --delete "${PROJECT_ROOT}/frontend/dist/" "${APP_DIR}/frontend/dist/"
+echo "  ✅ Frontend deployed to ${APP_DIR}/frontend/dist/"
 
 # ─── Step 3: Copy Backend ─────────────────────────────────────────
 echo "[3/6] Deploying backend..."
