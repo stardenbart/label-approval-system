@@ -39,14 +39,14 @@ case "${DAL_ENV}" in
     APP_DIR="/var/www/dal-system"
     PM2_NAME="dal-backend"
     BACKEND_PORT=3001
-    BACKUP_DIR="/var/backups/dal"
+    BACKUP_DIR="${BACKUP_DIR:-/var/backups/dal}"
     DB_NAME="dal_db"
     ;;
   staging)
     APP_DIR="/var/www/dal-system-staging"
     PM2_NAME="dal-backend-staging"
     BACKEND_PORT=3101
-    BACKUP_DIR="/var/backups/dal-staging"
+    BACKUP_DIR="${BACKUP_DIR:-/var/backups/dal-staging}"
     DB_NAME="dal_db_staging"
     ;;
   *)
