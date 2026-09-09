@@ -2,12 +2,15 @@
 
 # Dokumen handover internal: memuat kredensial server dan catatan operasional.
 ONBOARDING.md
+text
 
 # Backup: berisi data nyata — hash password, refresh token, isi dokumen.
 # Jangan pernah masuk ke repo, seberapa pun kecilnya.
 backups/
 *.sql
 *.sql.gz
+# Prisma migrations are source code, not database dumps.
+!backend/prisma/migrations/**/migration.sql
 dal_storage_*.tar.gz
 
 # Catatan akun uji dan sejenisnya

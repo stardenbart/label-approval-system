@@ -36,12 +36,15 @@ const QR_SIZE_ADVISORY_MIN_PT = 57;
 // ketiganya punya salinan sendiri dan sempat berbeda (fallback minimum di
 // pdf.service 10, sementara default yang di-seed 60).
 const SETTING_DEFAULTS = {
-  qr_default_width_pt:  '100',
-  qr_default_height_pt: '100',
+  // 48pt ≈ 16,9mm. Cukup ringkas untuk tiga QR per-level, tetapi masih dekat
+  // ukuran pindai nyaman. User boleh turun sampai policy min 36pt dengan
+  // peringatan scan di canvas.
+  qr_default_width_pt:  '48',
+  qr_default_height_pt: '48',
   qr_default_page:      '1',
   qr_default_x_percent: '85',
   qr_default_y_percent: '5',
-  qr_min_width_pt:      '60',
+  qr_min_width_pt:      '36',
   qr_max_width_pt:      '200',
   footer_default_x_percent: '3',
   footer_default_y_percent: '97',

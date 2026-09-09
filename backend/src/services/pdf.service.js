@@ -14,21 +14,16 @@
  *               yPt = pageHeightPt - (yPercent/100) * pageHeightPt - heightPt
  *               (flip Y because PDF origin is bottom-left)
  *
- * Satu QR per dokumen — bukan satu per level:
- *   Level 0 (Staff)  menentukan posisi QR dokumen + footer stamp dan MEMBEKUKAN
- *                    keputusannya ke document.stampManifest. Tidak ada berkas
- *                    yang ditulis di sini.
- *   Level 1 & 2      tidak menggambar apa pun dan tidak menulis berkas baru.
- *                    Persetujuan mereka tercatat di database dan langsung
- *                    terlihat di halaman publik yang dituju QR itu.
+ * Kebijakan QR dipilih per dokumen:
+ *   `document`  menempel satu QR /e/{docUuid} yang memuat seluruh rantai.
+ *   `per_level` menambahkan QR /e/approval/{approvalId} milik user aktual pada
+ *               setiap approval. Posisi awal horizontal/vertikal/grid/manual
+ *               dapat disesuaikan lagi oleh approver.
  *
- *   QR yang ditempel adalah `document.qrPathOriginal` → /e/{docUuid}, halaman
- *   yang menampilkan SELURUH rantai approval. Sebelumnya tiap level menempel
- *   QR miliknya sendiri (/e/approval/{approvalId}), sehingga satu label bisa
- *   membawa tiga QR yang masing-masing cuma mewakili satu approver.
+ * Kedua mode menyimpan keputusan dalam satu stampManifest. Level berikutnya
+ * hanya menambah entri manifest; tidak membuat salinan PDF per level.
  *
- *   Dokumen lama tetap punya approval.qrPath dan halaman /e/approval/:id-nya
- *   tetap dilayani — label yang sudah tercetak masih dipindai orang.
+ * Dokumen lama tetap memakai manifest v1/v2 dan endpoint lamanya tetap hidup.
  *
  * Berkas hasil penempelan tidak lagi disimpan per level:
  *
@@ -61,6 +56,8 @@ const { prisma } = require('../config/prisma');
 const logger     = require('../config/logger');
 const { QR_SIZE_LIMIT_PT, SETTING_DEFAULTS, MAX_APPROVAL_LEVEL } = require('../config/stamp');
 const compressService = require('./pdf-compress.service');
+const { placeFooterBox } = require('./footer-geometry');
+const { normalizeMode, normalizeLayout, placeNext } = require('./qr-layout.service');
 
 /**
  * Footer stamp (ID Regulatory / Nama Label / Nama File):
@@ -121,7 +118,7 @@ function footerLinesFor(document) {
  *                               180 (Flip Horizontal) / 270 (Flip Vertical).
  * @param {string[]} lines     - teks yang digambar, sudah dibekukan oleh pemanggil.
  */
-async function drawFooter(pdfDoc, footerPos, lines) {
+async function drawFooter(pdfDoc, footerPos, lines, { visualBounds = false } = {}) {
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
   const fontSize = footerPos?.fontSize || FOOTER_FONT_SIZE;
@@ -135,13 +132,26 @@ async function drawFooter(pdfDoc, footerPos, lines) {
   const page      = pages[pageIndex];
 
   const { width, height } = page.getSize();
-  const xPt = footerPos ? (footerPos.xPercent / 100) * width : FOOTER_MARGIN_PT;
-  // Same convention as the QR box: xPercent/yPercent is the box's top-left
-  // corner (percent-of-page, top-left origin); subtract heightPt to land on
-  // the bottom of the box, which is where the 3-line block's baseline sits.
-  const yPt = footerPos
-    ? height - (footerPos.yPercent / 100) * height - footerPos.heightPt
-    : FOOTER_MARGIN_PT;
+  const placement = footerPos && visualBounds
+    ? placeFooterBox({
+        pageWidth: width,
+        pageHeight: height,
+        xPercent: footerPos.xPercent,
+        yPercent: footerPos.yPercent,
+        width: footerPos.widthPt,
+        height: footerPos.heightPt,
+        rotation,
+      })
+    : {
+        // Manifest v1 memakai origin lama. Jalur ini sengaja dipertahankan agar
+        // dokumen yang sudah disetujui tidak bergeser saat dirender ulang.
+        originX: footerPos ? (footerPos.xPercent / 100) * width : FOOTER_MARGIN_PT,
+        originY: footerPos
+          ? height - (footerPos.yPercent / 100) * height - footerPos.heightPt
+          : FOOTER_MARGIN_PT,
+      };
+  const xPt = placement.originX;
+  const yPt = placement.originY;
   const maxWidth = footerPos ? footerPos.widthPt : width - FOOTER_MARGIN_PT * 2;
 
   lines.forEach((line, i) => {
@@ -277,7 +287,14 @@ const SIGNED_FILENAME = 'signed_level0.pdf';
  * Versi bentuk manifest. Dinaikkan kalau arti sebuah field berubah, supaya
  * manifest lama tetap bisa dikenali dan dirender dengan aturan lamanya.
  */
-const MANIFEST_VERSION = 1;
+const LEGACY_MANIFEST_VERSION = 1;
+const FOOTER_GEOMETRY_MANIFEST_VERSION = 2;
+const MANIFEST_VERSION = 3;
+const SUPPORTED_MANIFEST_VERSIONS = [
+  LEGACY_MANIFEST_VERSION,
+  FOOTER_GEOMETRY_MANIFEST_VERSION,
+  MANIFEST_VERSION,
+];
 
 /**
  * Field yang benar-benar menentukan rupa berkas hasil render. Dipakai untuk
@@ -287,7 +304,7 @@ const MANIFEST_VERSION = 1;
  * `stampedAt` dan `stampedBy` sengaja TIDAK ikut — keduanya jejak audit, tidak
  * tergambar di halaman.
  */
-const RENDER_KEYS = ['v', 'qr', 'footer', 'footerText', 'qrFile', 'sourceSha'];
+const RENDER_KEYS = ['v', 'qrMode', 'qrLayout', 'qrs', 'qr', 'footer', 'footerText', 'qrFile', 'sourceSha'];
 
 /**
  * Dari mana manifest ini berasal.
@@ -340,15 +357,19 @@ function manifestHash(manifest) {
  * @param {string|null} stampedBy - user id, untuk jejak audit
  * @returns {Promise<Object>} manifest
  */
-async function resolveStampManifest(document, position, footerPosition, stampedBy = null) {
+async function resolveStampManifest(document, position, footerPosition, stampedBy = null, options = {}) {
   const settings   = await getSettings();
   const sourcePath = resolveSourcePath(document);
 
-  const qrFile = document.qrPathOriginal;
+  // Record lama yang belum mempunyai kolom kebijakan harus tetap memakai satu
+  // QR dokumen. Record baru selalu membawa nilai dari default Prisma/DB.
+  const qrMode   = document.qrStampMode ? normalizeMode(document.qrStampMode) : 'document';
+  const qrLayout = normalizeLayout(document.qrLayout);
+  const qrFile = qrMode === 'per_level' ? options.qrFile : document.qrPathOriginal;
   if (!qrFile || !fs.existsSync(qrFile)) {
     throw new Error(
-      `Document QR not found for document ${document.id}. ` +
-      `qrService.generateOriginalQr() must finish and be persisted before stamping.`
+      `QR not found for document ${document.id}: ${qrFile || '(empty)'}. ` +
+      `QR generation must finish before stamping.`
     );
   }
 
@@ -383,6 +404,7 @@ async function resolveStampManifest(document, position, footerPosition, stampedB
   const pageIdx  = Math.max(0, Math.min(pages.length - 1, pos.pageNumber - 1));
   const { width: pw, height: ph } = pages[pageIdx].getSize();
   const maxOnPage = Math.min(pw, ph);
+  pos.pageNumber = pageIdx + 1;
 
   if (pos.widthPt > maxOnPage || pos.heightPt > maxOnPage) {
     logger.warn(
@@ -392,16 +414,27 @@ async function resolveStampManifest(document, position, footerPosition, stampedB
     pos.widthPt  = Math.min(pos.widthPt,  maxOnPage);
     pos.heightPt = Math.min(pos.heightPt, maxOnPage);
   }
+  // x/y adalah sudut kiri-atas. Pastikan QR baru sepenuhnya terlihat, termasuk
+  // saat default lama (mis. x=85%, ukuran 100pt) melewati tepi kanan halaman.
+  pos.xPercent = Math.min(pos.xPercent, ((pw - pos.widthPt) / pw) * 100);
+  pos.yPercent = Math.min(pos.yPercent, ((ph - pos.heightPt) / ph) * 100);
 
   return {
     v: MANIFEST_VERSION,
-    qr: {
+    qrMode,
+    qrLayout,
+    qrs: [{
+      kind:       qrMode === 'per_level' ? 'approval' : 'document',
+      approvalId: qrMode === 'per_level' ? options.approval?.id || null : null,
+      approverId: qrMode === 'per_level' ? options.approval?.approverId || stampedBy : null,
+      level:      qrMode === 'per_level' ? options.approval?.level ?? 0 : null,
       page: pos.pageNumber,
       xPct: pos.xPercent,
       yPct: pos.yPercent,
       wPt:  pos.widthPt,
       hPt:  pos.heightPt,
-    },
+      qrFile,
+    }],
     footer: {
       page:     fp.pageNumber,
       xPct:     fp.xPercent,
@@ -412,7 +445,6 @@ async function resolveStampManifest(document, position, footerPosition, stampedB
       rotation: fp.rotation,
     },
     footerText: footerLinesFor(document),
-    qrFile,
     // Mengunci manifest ke isi berkas asli yang benar. Kalau original.pdf
     // ternyata bukan yang dulu di-stamp, regenerasi harus berhenti, bukan
     // diam-diam menghasilkan berkas yang berbeda.
@@ -427,6 +459,84 @@ async function resolveStampManifest(document, position, footerPosition, stampedB
   };
 }
 
+function manifestQrs(manifest) {
+  if (manifest?.v >= MANIFEST_VERSION) return manifest.qrs || [];
+  if (manifest?.qr && manifest?.qrFile) return [{ ...manifest.qr, qrFile: manifest.qrFile }];
+  return [];
+}
+
+async function suggestedApprovalQrPosition(document, manifest, layout = document.qrLayout) {
+  const settings = await getSettings();
+  const existing = manifestQrs(manifest);
+  const base = existing.length === 0
+    ? {
+      pageNumber: settings.defaultPage,
+      xPercent: settings.defaultXPercent,
+      yPercent: settings.defaultYPercent,
+      widthPt: settings.defaultWidthPt,
+      heightPt: settings.defaultHeightPt,
+    }
+    : {
+      pageNumber: existing[0].page,
+      xPercent: existing[0].xPct,
+      yPercent: existing[0].yPct,
+      widthPt: existing[0].wPt,
+      heightPt: existing[0].hPt,
+    };
+  const source = await PDFDocument.load(fs.readFileSync(resolveSourcePath(document)));
+  const pages = source.getPages();
+  const pageIndex = Math.max(0, Math.min(pages.length - 1, (base.pageNumber || 1) - 1));
+  const { width, height } = pages[pageIndex].getSize();
+  return placeNext({
+    base: { ...base, pageNumber: pageIndex + 1 },
+    index: existing.length,
+    layout,
+    pageWidth: width,
+    pageHeight: height,
+  });
+}
+
+/** Tambahkan QR approval aktual ke manifest tanpa membuat salinan PDF baru. */
+async function appendApprovalQr(document, manifest, approval, qrFile, position = null) {
+  if (!manifest || manifest.v !== MANIFEST_VERSION) {
+    throw new Error('Per-level QR requires a v3 stamp manifest');
+  }
+  if (!qrFile || !fs.existsSync(qrFile)) {
+    throw new Error(`Approval QR missing for approval ${approval.id}: ${qrFile || '(empty)'}`);
+  }
+
+  const pos = position
+    ? await suggestedApprovalQrPosition(
+        document,
+        {
+          v: MANIFEST_VERSION,
+          qrs: [{
+            page: position.pageNumber,
+            xPct: position.xPercent,
+            yPct: position.yPercent,
+            wPt: position.widthPt,
+            hPt: position.heightPt,
+          }],
+        },
+        'manual',
+      )
+    : await suggestedApprovalQrPosition(document, manifest, manifest.qrLayout);
+  const qrs = manifestQrs(manifest).filter(qr => qr.approvalId !== approval.id);
+  qrs.push({
+    kind: 'approval',
+    approvalId: approval.id,
+    approverId: approval.approverId,
+    level: approval.level,
+    page: pos.pageNumber,
+    xPct: pos.xPercent,
+    yPct: pos.yPercent,
+    wPt: pos.widthPt,
+    hPt: pos.heightPt,
+    qrFile,
+  });
+  return { ...manifest, v: MANIFEST_VERSION, qrs };
+}
+
 /**
  * Gambar manifest ke atas PDF asli.
  *
@@ -439,7 +549,7 @@ async function resolveStampManifest(document, position, footerPosition, stampedB
  * @returns {Promise<Buffer>} byte PDF hasil penempelan
  */
 async function renderStamped(document, manifest) {
-  if (!manifest || manifest.v !== MANIFEST_VERSION) {
+  if (!manifest || !SUPPORTED_MANIFEST_VERSIONS.includes(manifest.v)) {
     throw new Error(`Unsupported stamp manifest version: ${manifest?.v}`);
   }
 
@@ -447,25 +557,23 @@ async function renderStamped(document, manifest) {
   const pdfDoc     = await PDFDocument.load(fs.readFileSync(sourcePath));
   const pages      = pdfDoc.getPages();
 
-  const { qr } = manifest;
-  const pageIndex = Math.max(0, Math.min(pages.length - 1, qr.page - 1));
-  const page      = pages[pageIndex];
-  const { width: pageWidthPt, height: pageHeightPt } = page.getSize();
-
-  if (!fs.existsSync(manifest.qrFile)) {
-    throw new Error(`QR image missing for document ${document.id}: ${manifest.qrFile}`);
+  for (const qr of manifestQrs(manifest)) {
+    const pageIndex = Math.max(0, Math.min(pages.length - 1, qr.page - 1));
+    const page      = pages[pageIndex];
+    const { width: pageWidthPt, height: pageHeightPt } = page.getSize();
+    if (!fs.existsSync(qr.qrFile)) {
+      throw new Error(`QR image missing for document ${document.id}: ${qr.qrFile}`);
+    }
+    const qrImage = await pdfDoc.embedPng(fs.readFileSync(qr.qrFile));
+    const xPt = (qr.xPct / 100) * pageWidthPt;
+    const yPt = pageHeightPt - (qr.yPct / 100) * pageHeightPt - qr.hPt;
+    page.drawImage(qrImage, {
+      x: xPt,
+      y: Math.max(0, yPt),
+      width: qr.wPt,
+      height: qr.hPt,
+    });
   }
-  const qrImage = await pdfDoc.embedPng(fs.readFileSync(manifest.qrFile));
-
-  const xPt = (qr.xPct / 100) * pageWidthPt;
-  const yPt = pageHeightPt - (qr.yPct / 100) * pageHeightPt - qr.hPt;
-
-  page.drawImage(qrImage, {
-    x:      xPt,
-    y:      Math.max(0, yPt),
-    width:  qr.wPt,
-    height: qr.hPt,
-  });
 
   const f = manifest.footer;
   await drawFooter(
@@ -480,6 +588,7 @@ async function renderStamped(document, manifest) {
       rotation:   f.rotation,
     },
     manifest.footerText,
+    { visualBounds: manifest.v >= 2 },
   );
 
   return Buffer.from(await pdfDoc.save());
@@ -520,11 +629,15 @@ async function writeFinalArchive(document, manifest, { compress = true } = {}) {
  * @returns {Promise<{ path: string, manifest: Object }>}
  */
 async function overlayEsign(document, approval, position, footerPosition = null) {
-  const manifest = await resolveStampManifest(document, position, footerPosition, approval?.approverId || null);
+  const manifest = await resolveStampManifest(
+    document, position, footerPosition, approval?.approverId || null,
+    { approval, qrFile: approval?.qrPath },
+  );
   const outPath  = await writeFinalArchive(document, manifest);
+  const qr = manifestQrs(manifest)[0];
   logger.info(
     `PDF signed [approval ${approval?.id}]: ${outPath} | ` +
-    `page ${manifest.qr.page} | x=${manifest.qr.xPct}% y=${manifest.qr.yPct}%`
+    `page ${qr.page} | x=${qr.xPct}% y=${qr.yPct}%`
   );
   return { path: outPath, manifest };
 }
@@ -532,6 +645,9 @@ async function overlayEsign(document, approval, position, footerPosition = null)
 module.exports = {
   overlayEsign,
   resolveStampManifest,
+  appendApprovalQr,
+  suggestedApprovalQrPosition,
+  manifestQrs,
   renderStamped,
   writeFinalArchive,
   manifestHash,

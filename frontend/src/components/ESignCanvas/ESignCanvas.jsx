@@ -4,6 +4,12 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { Rnd }      from 'react-rnd';
 import { Move, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, RotateCcw, Loader2 } from 'lucide-react';
 import api from '../../services/api';
+import {
+  footerPreviewLayout,
+  isQuarterTurn,
+  logicalFooterSize,
+  rotatedFooterSize,
+} from './footerGeometry.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -19,7 +25,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  *               • /documents/...   relative API path    (ApprovalPage — fetched via axios + auth)
  *   qrDataUrl — blob URL of QR PNG stamp, or null (shows placeholder box)
  *   defaults  — { xPercent, yPercent, widthPt, heightPt, pageNumber }
- *   limits    — { minWidthPt, maxWidthPt }
+ *   limits    — { minWidthPt, maxWidthPt, advisoryMinPt }
  *   onChange  — (position) => void  { pageNumber, xPercent, yPercent, widthPt, heightPt }
  *   readOnly  — true untuk level approval di atas 0: PDF tetap bisa dibaca dan
  *               di-zoom, tapi tidak ada kotak yang bisa digeser. Sejak QR
@@ -191,11 +197,14 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   // Footer box: same recalculation pattern as the QR box, kept independent.
   useEffect(() => {
     if (!footerEnabled || !canvasSize.w || !canvasSize.h) return;
+    const visualSize = rotatedFooterSize(footerSize.w, footerSize.h, footerRotation);
+    const rawX = (footerPosPercent.x / 100) * canvasSize.w;
+    const rawY = (footerPosPercent.y / 100) * canvasSize.h;
     setFooterPos({
-      x: (footerPosPercent.x / 100) * canvasSize.w,
-      y: (footerPosPercent.y / 100) * canvasSize.h,
+      x: Math.max(0, Math.min(rawX, canvasSize.w - visualSize.w * scale)),
+      y: Math.max(0, Math.min(rawY, canvasSize.h - visualSize.h * scale)),
     });
-  }, [canvasSize, footerPosPercent, footerEnabled]);
+  }, [canvasSize, footerPosPercent, footerEnabled, footerSize, footerRotation, scale]);
 
   // ---------------------------------------------------------------------------
   // Point (satuan PDF) <-> piksel layar
@@ -282,16 +291,17 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     [canvasSize, pageNum, footerBox]
   );
 
-  function commitFooter(pxX, pxY, ptW, ptH) {
-    const maxX = Math.max(0, canvasSize.w - ptToPx(ptW));
-    const maxY = Math.max(0, canvasSize.h - ptToPx(ptH));
+  function commitFooter(pxX, pxY, ptW, ptH, rotation = footerRotation) {
+    const visualSize = rotatedFooterSize(ptW, ptH, rotation);
+    const maxX = Math.max(0, canvasSize.w - ptToPx(visualSize.w));
+    const maxY = Math.max(0, canvasSize.h - ptToPx(visualSize.h));
     const newX = Math.max(0, Math.min(pxX, maxX));
     const newY = Math.max(0, Math.min(pxY, maxY));
     setFooterPos({ x: newX, y: newY });
     setFooterPosPercent({ x: (newX / canvasSize.w) * 100, y: (newY / canvasSize.h) * 100 });
     setFooterSize({ w: ptW, h: ptH });
     setFooterDragging(false);
-    emitFooterPosition(newX, newY, ptW, ptH, footerFontSize, footerRotation);
+    emitFooterPosition(newX, newY, ptW, ptH, footerFontSize, rotation);
   }
 
   function handleFooterDragStop(_e, data) {
@@ -301,12 +311,13 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   // Kotak footer bukan persegi — lebar dan tinggi bebas, masing-masing dijepit
   // ke batas yang dikirim server.
   function handleFooterResizeStop(ref, position) {
-    const ptW = Math.round(pxToPt(ref.offsetWidth));
-    const ptH = Math.round(pxToPt(ref.offsetHeight));
+    const displayW = Math.round(pxToPt(ref.offsetWidth));
+    const displayH = Math.round(pxToPt(ref.offsetHeight));
+    const logical = logicalFooterSize(displayW, displayH, footerRotation);
     commitFooter(
       position.x, position.y,
-      Math.max(footerLimits.minW, Math.min(footerLimits.maxW, ptW)),
-      Math.max(footerLimits.minH, Math.min(footerLimits.maxH, ptH)),
+      Math.max(footerLimits.minW, Math.min(footerLimits.maxW, logical.w)),
+      Math.max(footerLimits.minH, Math.min(footerLimits.maxH, logical.h)),
     );
   }
 
@@ -321,7 +332,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
 
   function handleFooterRotationChange(newRotation) {
     setFooterRotation(newRotation);
-    emitFooterPosition(footerPos.x, footerPos.y, footerSize.w, footerSize.h, footerFontSize, newRotation);
+    commitFooter(footerPos.x, footerPos.y, footerSize.w, footerSize.h, newRotation);
   }
 
   // ---------------------------------------------------------------------------
@@ -333,7 +344,9 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
   // disetel superadmin seolah tidak berpengaruh.
   const sizeMin = limits?.minWidthPt;
   const sizeMax = limits?.maxWidthPt;
+  const advisoryMin = limits?.advisoryMinPt;
   const sizeReady = Number.isFinite(sizeMin) && Number.isFinite(sizeMax);
+  const belowAdvisory = Number.isFinite(advisoryMin) && stampSize.w < advisoryMin;
 
   const toMm = (pt) => (pt * 25.4) / 72;
 
@@ -374,6 +387,12 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
     setStampSize({ w, h });
     emitPosition((px / 100) * canvasSize.w, (py / 100) * canvasSize.h, w, h);
   }
+
+  const footerDisplaySize = rotatedFooterSize(footerSize.w, footerSize.h, footerRotation);
+  const footerQuarterTurn = isQuarterTurn(footerRotation);
+  const footerWidthPx = ptToPx(footerSize.w);
+  const footerHeightPx = ptToPx(footerSize.h);
+  const footerLayout = footerPreviewLayout(footerWidthPx, footerHeightPx, footerRotation);
 
   // ---------------------------------------------------------------------------
   // Render
@@ -442,6 +461,11 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
         {sizeReady && (
           <span className="text-[11px] text-gray-400">
             ({sizeMin}–{sizeMax}pt)
+          </span>
+        )}
+        {belowAdvisory && (
+          <span className="text-[11px] font-medium text-amber-700 bg-amber-100 border border-amber-200 rounded px-2 py-0.5">
+            Ukuran kecil — uji scan sebelum final
           </span>
         )}
 
@@ -555,14 +579,14 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
 
             {!readOnly && footerEnabled && !pdfLoading && pdfReady && canvasSize.w > 0 && (
               <Rnd
-                size={{ width: ptToPx(footerSize.w), height: ptToPx(footerSize.h) }}
+                size={{ width: ptToPx(footerDisplaySize.w), height: ptToPx(footerDisplaySize.h) }}
                 position={footerPos}
                 bounds="parent"
                 disableDragging={!footerBox.draggable}
-                minWidth={ptToPx(footerLimits.minW)}
-                maxWidth={ptToPx(footerLimits.maxW)}
-                minHeight={ptToPx(footerLimits.minH)}
-                maxHeight={ptToPx(footerLimits.maxH)}
+                minWidth={ptToPx(footerQuarterTurn ? footerLimits.minH : footerLimits.minW)}
+                maxWidth={ptToPx(footerQuarterTurn ? footerLimits.maxH : footerLimits.maxW)}
+                minHeight={ptToPx(footerQuarterTurn ? footerLimits.minW : footerLimits.minH)}
+                maxHeight={ptToPx(footerQuarterTurn ? footerLimits.maxW : footerLimits.maxH)}
                 onDragStart={() => setFooterDragging(true)}
                 onDragStop={handleFooterDragStop}
                 onResizeStart={() => setFooterDragging(true)}
@@ -584,9 +608,16 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
                   title={footerBox.draggable ? 'Geser untuk memindahkan · tarik sudut untuk mengubah ukuran' : 'Posisi stamp footer terkunci (diset di Level 0)'}
                 >
                   <div
-                    className="w-full h-full bg-white/85 border-2 border-dashed border-amber-500 rounded px-1.5 py-1 overflow-hidden flex flex-col justify-center gap-0.5"
-                    style={{ transform: `rotate(${-footerRotation}deg)` }}
-                    title="Preview kasar — orientasi aktual di PDF ditentukan server-side"
+                    className="absolute bg-white/85 border-2 border-dashed border-amber-500 rounded px-1.5 py-1 overflow-hidden flex flex-col justify-center gap-0.5"
+                    style={{
+                      width: `${footerWidthPx}px`,
+                      height: `${footerHeightPx}px`,
+                      left: `${footerLayout.left}px`,
+                      top: `${footerLayout.top}px`,
+                      transform: footerLayout.transform,
+                      transformOrigin: 'center',
+                    }}
+                    title="Preview mengikuti orientasi dan bounding box hasil PDF"
                   >
                     {(footerBox.previewLines || []).slice(0, 3).map((line, i) => (
                       <p
@@ -600,7 +631,7 @@ export default function ESignCanvas({ pdfUrl, qrDataUrl, defaults, limits, onCha
                   </div>
                   {footerBox.draggable && (
                     <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-amber-500 px-1.5 text-[10px] font-medium leading-4 text-white">
-                      {Math.round(footerSize.w)}×{Math.round(footerSize.h)}pt
+                      {Math.round(footerDisplaySize.w)}×{Math.round(footerDisplaySize.h)}pt
                     </span>
                   )}
                 </div>

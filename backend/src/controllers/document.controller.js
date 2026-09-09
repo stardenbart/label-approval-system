@@ -24,6 +24,7 @@ const { resolveLevel0Approver } = require('../services/approver-resolution.servi
 const { QR_SIZE_LIMIT_PT, FOOTER_SIZE_LIMIT_PT } = require('../config/stamp');
 const dedupService = require('../services/storage-dedup.service');
 const stampedCache = require('../services/stamped-cache.service');
+const { QR_STAMP_MODES, QR_LAYOUTS } = require('../services/qr-layout.service');
 
 const APPROVAL_SELECT = {
   id: true, level: true, status: true,
@@ -197,6 +198,8 @@ exports.upload = async (req, res, next) => {
       // position / footerPosition sent as JSON strings from multipart/form-data
       position:          Joi.string().optional().allow('', null),
       footerPosition:    Joi.string().optional().allow('', null),
+      qrStampMode:       Joi.string().valid(...QR_STAMP_MODES).default('per_level'),
+      qrLayout:          Joi.string().valid(...QR_LAYOUTS).default('horizontal'),
       // uploader-role only: manual override of the suggested Level-0 approver
       targetApproverId:  Joi.string().uuid().optional().allow('', null),
     });
@@ -339,6 +342,8 @@ exports.upload = async (req, res, next) => {
             tanggalTerima:     new Date(value.tanggalTerima),
             tanggalPeriksa:    new Date(value.tanggalPeriksa),
             status:            'PENDING_APPROVAL',
+            qrStampMode:       value.qrStampMode,
+            qrLayout:          value.qrLayout,
           },
         });
 
@@ -426,7 +431,9 @@ exports.upload = async (req, res, next) => {
           // ditulis saat approval final. Lihat header pdf.service.js.
           const manifest = await pdfService.resolveStampManifest(
             freshDoc, position, footerPosition, level0Approval.approverId,
+            { approval: level0Approval, qrFile: approvalQrPath },
           );
+          const firstQr = pdfService.manifestQrs(manifest)[0];
 
           await prisma.$transaction(async (tx) => {
             await tx.document.update({ where: { id: docUuid }, data: { stampManifest: manifest } });
@@ -437,11 +444,11 @@ exports.upload = async (req, res, next) => {
               data: {
                 documentId: docUuid,
                 approvalId: approvalLevel0Uuid,
-                pageNumber: manifest.qr.page,
-                xPercent:   manifest.qr.xPct,
-                yPercent:   manifest.qr.yPct,
-                widthPt:    manifest.qr.wPt,
-                heightPt:   manifest.qr.hPt,
+                pageNumber: firstQr.page,
+                xPercent:   firstQr.xPct,
+                yPercent:   firstQr.yPct,
+                widthPt:    firstQr.wPt,
+                heightPt:   firstQr.hPt,
               },
             });
             await tx.documentFooterPosition.create({
@@ -503,6 +510,7 @@ exports.getOne = async (req, res, next) => {
         qrPathEsign: true, qrPathOriginal: true,
         pathSignedLevel0: true, pathSignedLevel1: true,
         pathSignedFinal: true, pathCheckReport: true, stampManifest: true,
+        qrStampMode: true, qrLayout: true,
         productCategory: { include: { group: true } },
         uploader:        { select: { id: true, name: true } },
         approvals: { orderBy: { level: 'asc' }, select: APPROVAL_DETAIL_SELECT },
@@ -828,9 +836,18 @@ exports.downloadApprovalQr = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'QR not ready yet for this approval.' });
     }
 
-    await auditService.log(req.user.id, 'APPROVAL_QR_DOWNLOADED', 'document_approvals', approval.id, req.ip);
+    // Gambar pada halaman detail bukan aksi download. Tetap lewat endpoint
+    // document-scoped ini agar checkDocAccess berlaku, tetapi jangan penuhi
+    // audit log setiap kali polling/refetch memuat ulang thumbnail.
+    const wantsPreview = req.query.preview === 'true';
+    if (!wantsPreview) {
+      await auditService.log(req.user.id, 'APPROVAL_QR_DOWNLOADED', 'document_approvals', approval.id, req.ip);
+    }
     res.setHeader('Content-Type',        'image/png');
-    res.setHeader('Content-Disposition', `attachment; filename="qr_level${approval.level}_${result.regulatoryId}.png"`);
+    res.setHeader(
+      'Content-Disposition',
+      `${wantsPreview ? 'inline' : 'attachment'}; filename="qr_level${approval.level}_${result.regulatoryId}.png"`,
+    );
     res.setHeader('Cache-Control',       'no-store, no-cache, must-revalidate');
     res.setHeader('Pragma',              'no-cache');
     res.setHeader('Expires',            '0');

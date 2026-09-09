@@ -5,12 +5,9 @@
 // FIX-05a — suggestedApprovers: isFinalLevel now uses mapping-based check (see resolveIsFinalLevel).
 // FIX-05b — approve(): isFinalLevel determined by absence of a mapping for level+1, not a
 //            hardcoded `>= 2` or fragile `_max.level || 2` fallback.
-// FIX-06  — (DIGANTI) Dulu tiap approval membuat QR sendiri dan menempelkannya,
-//            sehingga satu label memuat tiga QR. Sekarang QR dokumen ditempel
-//            sekali di Level 0 dan halaman publiknya menampilkan seluruh rantai;
-//            level 1 dan 2 tidak menempel apa pun. Lihat header pdf.service.js.
-//            approval.qrPath berhenti diisi untuk dokumen baru, tapi tetap
-//            dilayani untuk label lama yang sudah tercetak.
+// FIX-06  — Kebijakan QR kini dipilih per dokumen: satu QR dokumen atau QR
+//            approval pada setiap level. Keduanya memakai satu manifest dan
+//            satu arsip final, tanpa salinan PDF per level.
 
 const fs     = require('fs');
 const path   = require('path');
@@ -119,21 +116,21 @@ exports.approve = async (req, res, next) => {
       if (!nextApprover) return res.status(400).json({ success: false, message: 'Invalid next approver' });
     }
 
-    // ── Dua hal yang berbeda, jangan tertukar ───────────────────────────
-    //
-    // 1. QR YANG DICETAK — satu saja per dokumen (document.qrPathOriginal →
-    //    /e/{docUuid}), ditempel sekali oleh Level 0 bersama footer stamp.
-    //    Level 1 dan 2 tidak menggambar apa pun ke PDF.
-    //
-    // 2. QR PER LEVEL — tiap approval tetap punya QR sendiri
-    //    (/e/approval/{approvalId}) yang menampilkan konfirmasi level itu saja.
-    //    Ini TIDAK ditempel ke PDF; gunanya untuk ditelusuri per level dari
-    //    halaman detail dokumen.
-    //
-    // Sebelumnya keduanya digabung: QR per level ikut dicetak, sehingga satu
-    // label memuat tiga QR.
+    // Kebijakan dipilih per dokumen. Mode `document` mempertahankan satu QR
+    // ringkas; mode `per_level` menambahkan QR approval aktual setiap kali level
+    // menyetujui. Keduanya tetap memakai satu original + satu arsip final.
     const isLevel0 = approval.level === 0;
+    const qrStampMode = approval.document.qrStampMode || 'document';
+    const stampsThisLevel = isLevel0 || qrStampMode === 'per_level';
     const position = value.position || null;
+
+    if (qrStampMode === 'per_level' && approval.document.qrLayout === 'manual' && !isLevel0 && !position) {
+      return res.status(400).json({
+        success: false,
+        message: 'Layout manual memerlukan posisi QR untuk level ini. Geser QR sebelum menyetujui.',
+        code: 'QR_POSITION_REQUIRED',
+      });
+    }
 
     const docStorageDir = path.dirname(approval.document.pathOriginal);
     let approvalQrPath = null;
@@ -144,10 +141,10 @@ exports.approve = async (req, res, next) => {
       return res.status(500).json({ success: false, message: 'Failed to generate approval QR', code: 'QR_ERROR' });
     }
 
-    if (position && !isLevel0) {
+    if (position && !stampsThisLevel) {
       return res.status(400).json({
         success: false,
-        message: 'Posisi QR hanya dapat diatur di Level 0 — level berikutnya tidak menempel stamp',
+        message: 'Dokumen ini memakai mode satu QR; posisi hanya dapat diatur di Level 0',
       });
     }
 
@@ -164,12 +161,31 @@ exports.approve = async (req, res, next) => {
       try {
         manifest = await pdfService.resolveStampManifest(
           approval.document, position, value.footerPosition || null, req.user.id,
+          { approval, qrFile: approvalQrPath },
         );
       } catch (pdfErr) {
         logger.error('Stamp manifest resolution failed:', pdfErr);
         return res.status(500).json({ success: false, message: 'Failed to process PDF signature', code: 'PDF_ERROR' });
       }
+    } else if (qrStampMode === 'per_level') {
+      try {
+        manifest = await pdfService.appendApprovalQr(
+          approval.document,
+          approval.document.stampManifest,
+          approval,
+          approvalQrPath,
+          position,
+        );
+      } catch (pdfErr) {
+        logger.error('Per-level QR manifest update failed:', pdfErr);
+        return res.status(500).json({ success: false, message: 'Failed to add this level QR to PDF', code: 'PDF_ERROR' });
+      }
     }
+    const stampEntry = manifest
+      ? pdfService.manifestQrs(manifest).find(qr =>
+          qrStampMode === 'per_level' ? qr.approvalId === approval.id : isLevel0
+        )
+      : null;
 
     // ── Approval final menulis SATU arsip permanen ──────────────────────
     //
@@ -214,16 +230,24 @@ exports.approve = async (req, res, next) => {
           },
         });
 
-        if (value.position) {
-          await tx.documentEsignPosition.create({
-            data: {
+        if (stampEntry) {
+          await tx.documentEsignPosition.upsert({
+            where: { approvalId: approval.id },
+            update: {
+              pageNumber: stampEntry.page,
+              xPercent:   stampEntry.xPct,
+              yPercent:   stampEntry.yPct,
+              widthPt:    stampEntry.wPt,
+              heightPt:   stampEntry.hPt,
+            },
+            create: {
               documentId: approval.documentId,
               approvalId: approval.id,
-              pageNumber: value.position.pageNumber,
-              xPercent:   value.position.xPercent,
-              yPercent:   value.position.yPercent,
-              widthPt:    value.position.widthPt,
-              heightPt:   value.position.heightPt,
+              pageNumber: stampEntry.page,
+              xPercent:   stampEntry.xPct,
+              yPercent:   stampEntry.yPct,
+              widthPt:    stampEntry.wPt,
+              heightPt:   stampEntry.hPt,
             },
           });
         }
@@ -396,6 +420,16 @@ exports.suggestedApprovers = async (req, res, next) => {
     // Same helper approve() uses — the UI must not offer a "next approver" for a
     // level that approve() will then treat as final (FIX-05a).
     const isFinalLevel = await resolveIsFinalLevel(approval);
+    const qrStampMode = approval.document.qrStampMode || 'document';
+    const qrLayout = approval.document.qrLayout || 'horizontal';
+    const stampsThisLevel = approval.level === 0 || qrStampMode === 'per_level';
+    const qrPosition = stampsThisLevel
+      ? await pdfService.suggestedApprovalQrPosition(
+          approval.document,
+          approval.document.stampManifest,
+          qrLayout,
+        )
+      : null;
 
     const mappings = await prisma.productApproverMapping.findMany({
       where:   { productGroupId: groupId, level: nextLevel },
@@ -418,6 +452,9 @@ exports.suggestedApprovers = async (req, res, next) => {
         documentId:    approval.documentId,
         approvalLevel: approval.level,
         isFinalLevel,
+        qrStampMode,
+        qrLayout,
+        qrPosition,
         document: {
           id:               approval.document.id,
           labelName:        approval.document.labelName,
