@@ -42,28 +42,30 @@ export default function ApprovalPage() {
   const isFinalLevel = approvalData?.isFinalLevel ?? false;
   const document     = approvalData?.document;
   const approvalLevel = Number(approvalData?.approvalLevel ?? 1);
+  const qrStampMode  = approvalData?.qrStampMode || 'document';
+  const qrLayout     = approvalData?.qrLayout || 'horizontal';
+  const stampsThisLevel = approvalLevel === 0 || qrStampMode === 'per_level';
 
   // Footer stamp (ID Regulatory / Nama Label / Nama File): locked after Level 0.
   useEffect(() => {
     setFooterPosition(approvalData?.footerPosition || null);
   }, [approvalData]);
 
-  // ── Pre-fetch QR dokumen sebagai blob URL ──────────────────────
-  // Satu QR per dokumen: yang ditempel adalah QR milik dokumen (menuju
-  // /e/{docUuid}), bukan QR per-approval. QR itu sudah dibuat sejak upload,
-  // jadi tidak perlu preview yang dirender on-the-fly — berkasnya memang ada.
-  //
-  // Hanya Level 0 yang menempel, jadi level berikutnya tidak mengambilnya sama
-  // sekali dan kanvasnya jadi pratinjau baca-saja.
+  // Ambil QR yang benar-benar akan dicetak. Mode ringkas memakai QR dokumen di
+  // Level 0; mode per-level memakai QR approval aktual pada setiap level.
   //
   // PDF TIDAK di-prefetch di sini — ESignCanvas handle sendiri via
   // axios interceptor (auth header + auto-refresh). Lihat ESignCanvas FIX-01.
   useEffect(() => {
-    if (!documentId || approvalLevel !== 0) return;
+    setQrDataUrl(null);
+    if (!documentId || !stampsThisLevel) return;
     let blobUrl = null;
     let cancelled = false;
 
-    api.get(`/documents/${documentId}/qr/original`, { responseType: 'blob' })
+    const qrUrl = qrStampMode === 'per_level'
+      ? `/approvals/${approvalId}/qr?preview=true`
+      : `/documents/${documentId}/qr/original`;
+    api.get(qrUrl, { responseType: 'blob' })
       .then(res => {
         if (cancelled) return;
         blobUrl = URL.createObjectURL(res.data);
@@ -77,7 +79,7 @@ export default function ApprovalPage() {
       cancelled = true;
       if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
-  }, [documentId, approvalLevel]);
+  }, [documentId, approvalId, qrStampMode, stampsThisLevel]);
 
   // ── Approver list ──────────────────────────────────────────────
   const suggested = approvalData?.suggested || [];
@@ -93,12 +95,13 @@ export default function ApprovalPage() {
   );
 
   // ── QR/PDF defaults dari system settings ──────────────────────
+  const suggestedQrPosition = approvalData?.qrPosition;
   const qrDefaults = settings ? {
-    xPercent:   parseFloat(settings.qr_default_x_percent || 85),
-    yPercent:   parseFloat(settings.qr_default_y_percent || 5),
-    widthPt:    parseFloat(settings.qr_default_width_pt  || 100),
-    heightPt:   parseFloat(settings.qr_default_height_pt || 100),
-    pageNumber: parseInt(settings.qr_default_page        || 1),
+    xPercent:   Number(suggestedQrPosition?.xPercent ?? settings.qr_default_x_percent ?? 85),
+    yPercent:   Number(suggestedQrPosition?.yPercent ?? settings.qr_default_y_percent ?? 5),
+    widthPt:    Number(suggestedQrPosition?.widthPt  ?? settings.qr_default_width_pt  ?? 48),
+    heightPt:   Number(suggestedQrPosition?.heightPt ?? settings.qr_default_height_pt ?? 48),
+    pageNumber: Number(suggestedQrPosition?.pageNumber ?? settings.qr_default_page ?? 1),
   } : null;
 
   const qrLimits = settings ? {
@@ -107,6 +110,7 @@ export default function ApprovalPage() {
     // ketimbang diam-diam memakai rentang lain.
     minWidthPt: parseFloat(settings.qr_min_width_pt),
     maxWidthPt: parseFloat(settings.qr_max_width_pt),
+    advisoryMinPt: Number(settings.limits?.qrAdvisoryMinPt),
   } : null;
 
   const footerDefaults = approvalData?.footerPosition || (settings ? {
@@ -131,13 +135,16 @@ export default function ApprovalPage() {
       toast.error('Select next level approver first');
       return;
     }
+    if (qrStampMode === 'per_level' && qrLayout === 'manual' && approvalLevel > 0 && !position) {
+      toast.error('Geser QR level ini terlebih dahulu karena layout Manual dipilih');
+      return;
+    }
     setSubmitting(true);
     try {
       await api.post(`/approvals/${approvalId}/approve`, {
         notes:          notes.trim() || undefined,
         nextApproverId: isFinalLevel ? undefined : nextApproverId,
-        // Hanya Level 0 yang menempel stamp; server menolak position dari level lain.
-        position:       approvalLevel === 0 ? (position || undefined) : undefined,
+        position:       stampsThisLevel ? (position || undefined) : undefined,
         // Footer stamp position can only be set at Level 0 — the server
         // rejects it otherwise, but avoid even sending it for locked levels.
         footerPosition: approvalLevel === 0 ? (footerPosition || undefined) : undefined,
@@ -236,14 +243,16 @@ export default function ApprovalPage() {
         <div className="xl:col-span-3 card p-4">
           <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2 text-sm">
             <FileText size={15} className="text-brand-500" />
-            {approvalLevel === 0
+            {stampsThisLevel
               ? 'Pratinjau Dokumen & Posisi QR Stamp'
               : 'Pratinjau Dokumen'}
           </h3>
           <p className="text-xs text-gray-400 mb-3">
-            {approvalLevel === 0
-              ? 'Geser kotak QR ke posisi yang diinginkan. QR ini satu-satunya yang ditempel — halaman yang dituju menampilkan seluruh rantai approval.'
-              : 'QR sudah ditempel Staff Regulatory di Level 0 dan berlaku untuk seluruh rantai. Anda tinggal memeriksa dan menyetujui.'}
+            {qrStampMode === 'per_level'
+              ? `QR Level ${approvalLevel} membuka bukti approval Anda. Posisi awal mengikuti layout ${qrLayout} dan masih bisa digeser.`
+              : approvalLevel === 0
+                ? 'Geser QR dokumen ke posisi yang diinginkan. QR ini membuka seluruh rantai approval.'
+                : 'QR dokumen sudah ditempel di Level 0. Anda tinggal memeriksa dan menyetujui.'}
           </p>
 
           {/* Tunggu documentId + qrDefaults tersedia sebelum mount ESignCanvas.
@@ -258,7 +267,7 @@ export default function ApprovalPage() {
                 defaults={qrDefaults}
                 limits={qrLimits}
                 onChange={setPosition}
-                readOnly={approvalLevel !== 0}
+                readOnly={!stampsThisLevel}
                 footerBox={approvalLevel === 0 && footerDefaults ? {
                   enabled:      true,
                   draggable:    true,
@@ -374,13 +383,12 @@ export default function ApprovalPage() {
             </div>
           )}
 
-          {/* QR position info — hanya relevan di Level 0, satu-satunya level yang menempel */}
-          {approvalLevel !== 0 ? (
+          {/* Posisi tersedia pada setiap level hanya untuk mode per-level. */}
+          {!stampsThisLevel ? (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
               <p className="text-xs font-semibold text-blue-800">Tidak ada stamp di level ini</p>
               <p className="text-xs text-blue-600 mt-0.5">
-                Satu QR sudah ditempel Staff Regulatory di Level 0 dan mewakili seluruh rantai.
-                Persetujuan Anda langsung tercatat di halaman verifikasi QR tersebut.
+                Dokumen ini memakai satu QR yang mewakili seluruh rantai approval.
               </p>
             </div>
           ) : position ? (

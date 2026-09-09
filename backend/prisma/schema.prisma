@@ -113,6 +113,10 @@ model Document {
   // — termasuk setelah default di System Settings diubah atau nama label diedit.
   // Lihat pdf.service.js: resolveStampManifest() / renderStamped().
   stampManifest       Json?     @map("stamp_manifest")
+  // Kebijakan QR dipilih per dokumen. `per_level` menempelkan QR milik setiap
+  // approval; `document` mempertahankan opsi ringkas satu QR untuk seluruh alur.
+  qrStampMode          String    @default("per_level") @map("qr_stamp_mode") @db.VarChar(20)
+  qrLayout             String    @default("horizontal") @map("qr_layout") @db.VarChar(20)
   status              DocumentStatus @default(PENDING_APPROVAL)
   uploadedBy          String    @map("uploaded_by") @db.VarChar(36)
   tanggalTerima       DateTime  @map("tanggal_terima") @db.Date

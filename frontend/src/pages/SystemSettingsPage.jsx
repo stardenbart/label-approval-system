@@ -107,7 +107,7 @@ export default function SystemSettingsPage() {
   const previewH = 283; // A4 ratio
   const qxPx  = ((parseFloat(form.qr_default_x_percent) || 85) / 100) * previewW;
   const qyPx  = ((parseFloat(form.qr_default_y_percent) || 5)  / 100) * previewH;
-  const qwPx  = ((parseFloat(form.qr_default_width_pt)  || 100) / 595) * previewW;
+  const qwPx  = ((parseFloat(form.qr_default_width_pt)  || 48) / 595) * previewW;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">

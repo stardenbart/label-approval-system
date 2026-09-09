@@ -30,6 +30,8 @@ export default function DocumentUploadPage() {
   });
   const [position,       setPosition]       = useState(null);
   const [footerPosition, setFooterPosition] = useState(null);
+  const [qrStampMode,    setQrStampMode]    = useState('per_level');
+  const [qrLayout,       setQrLayout]       = useState('horizontal');
   const [loading,    setLoading]    = useState(false);
   const [dragOver,   setDragOver]   = useState(false);
   const [showCanvas, setShowCanvas] = useState(false);
@@ -114,8 +116,8 @@ export default function DocumentUploadPage() {
   const qrDefaults = settings ? {
     xPercent:   parseFloat(settings.qr_default_x_percent || 85),
     yPercent:   parseFloat(settings.qr_default_y_percent || 5),
-    widthPt:    parseFloat(settings.qr_default_width_pt  || 100),
-    heightPt:   parseFloat(settings.qr_default_height_pt || 100),
+    widthPt:    parseFloat(settings.qr_default_width_pt  || 48),
+    heightPt:   parseFloat(settings.qr_default_height_pt || 48),
     pageNumber: parseInt(settings.qr_default_page        || 1),
   } : null;
 
@@ -125,6 +127,7 @@ export default function DocumentUploadPage() {
     // ketimbang diam-diam memakai rentang lain.
     minWidthPt: parseFloat(settings.qr_min_width_pt),
     maxWidthPt: parseFloat(settings.qr_max_width_pt),
+    advisoryMinPt: Number(settings.limits?.qrAdvisoryMinPt),
   } : null;
 
   const footerDefaults = settings ? {
@@ -177,6 +180,8 @@ export default function DocumentUploadPage() {
     fd.append('productCategoryId', form.productCategoryId);
     fd.append('tanggalTerima',     form.tanggalTerima);
     fd.append('tanggalPeriksa',    form.tanggalPeriksa);
+    fd.append('qrStampMode',       qrStampMode);
+    fd.append('qrLayout',          qrLayout);
 
     // Position / footerPosition are only meaningful for the direct-sign
     // (superadmin) flow — the backend ignores them for the uploader flow
@@ -328,14 +333,65 @@ export default function DocumentUploadPage() {
           </div>
         )}
 
+        {file && (
+          <div className="card p-4 space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">QR pada PDF</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Atur per dokumen. Pilihan ini dikunci setelah alur approval dimulai.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className={`rounded-lg border p-3 cursor-pointer ${qrStampMode === 'per_level' ? 'border-brand-500 bg-brand-50' : 'border-gray-200'}`}>
+                <input
+                  type="radio"
+                  name="qrStampMode"
+                  value="per_level"
+                  checked={qrStampMode === 'per_level'}
+                  onChange={e => setQrStampMode(e.target.value)}
+                  className="mr-2"
+                />
+                <span className="text-sm font-semibold text-gray-800">QR setiap level</span>
+                <p className="text-xs text-gray-500 mt-1 ml-5">Setiap QR membuka bukti approval user pada level tersebut.</p>
+              </label>
+              <label className={`rounded-lg border p-3 cursor-pointer ${qrStampMode === 'document' ? 'border-brand-500 bg-brand-50' : 'border-gray-200'}`}>
+                <input
+                  type="radio"
+                  name="qrStampMode"
+                  value="document"
+                  checked={qrStampMode === 'document'}
+                  onChange={e => setQrStampMode(e.target.value)}
+                  className="mr-2"
+                />
+                <span className="text-sm font-semibold text-gray-800">Satu QR dokumen</span>
+                <p className="text-xs text-gray-500 mt-1 ml-5">Satu QR membuka seluruh rantai approval.</p>
+              </label>
+            </div>
+            {qrStampMode === 'per_level' && (
+              <div>
+                <label className="label">Susunan awal QR</label>
+                <select className="input" value={qrLayout} onChange={e => setQrLayout(e.target.value)}>
+                  <option value="horizontal">Horizontal — berjajar ke kanan</option>
+                  <option value="vertical">Vertikal — berjajar ke bawah</option>
+                  <option value="grid">Grid — otomatis pindah baris</option>
+                  <option value="manual">Manual — tiap approver menggeser sendiri</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">Posisi usulan tetap dapat digeser oleh approver sebelum menyetujui.</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {!isUploaderRole && showCanvas && localPdfUrl && qrDefaults && (
           <div className="card p-4">
             <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2 text-sm">
               <PenTool size={15} className="text-brand-500" />
-              Staff Signature Position (QR Stamp Level 0)
+              Posisi QR Level 0
             </h3>
             <p className="text-xs text-gray-400 mb-3">
-              Determine the position of your QR stamp on the document before forwarding it to the SPV.
+              {qrStampMode === 'per_level'
+                ? `QR berikutnya akan mengikuti susunan ${qrLayout}, lalu tetap bisa disesuaikan oleh approver.`
+                : 'QR ini mewakili seluruh rantai approval dokumen.'}
             </p>
 
             <ESignCanvas

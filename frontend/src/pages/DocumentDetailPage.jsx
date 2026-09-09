@@ -3,12 +3,13 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { Download, QrCode, FileText, CheckCircle, XCircle, Clock, ArrowLeft, Trash2 } from 'lucide-react';
+import { Download, QrCode, FileText, CheckCircle, XCircle, Clock, ArrowLeft, Trash2, ExternalLink, Loader2 } from 'lucide-react';
 import api          from '../services/api';
 import { qk } from '../services/queryKeys';
 import { afterDocumentDelete } from '../services/cacheSync';
 import useAuthStore from '../store/authStore';
 import toast        from 'react-hot-toast';
+import { buildApprovalQrRows } from './documentQrPresentation.js';
 
 function StatusBadge({ status }) {
   if (status === 'APPROVED')  return <span className="badge-approved flex items-center gap-1"><CheckCircle size={12} />APPROVED</span>;
@@ -39,6 +40,8 @@ export default function DocumentDetailPage() {
   // HIGH-02: Load QR images via authenticated api call (img tag can't send auth headers)
   const [qrEsignUrls,  setQrEsignUrls]  = useState({});
   const [qrOriginalUrl, setQrOriginalUrl] = useState(null);
+  const [approvalQrUrls, setApprovalQrUrls] = useState({});
+  const [approvalQrLoading, setApprovalQrLoading] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: qk.document(id),
@@ -48,7 +51,12 @@ export default function DocumentDetailPage() {
       query.state.data?.status === 'PENDING_APPROVAL' ? 20_000 : false,
   });
 
-  // Load QR images after doc data arrives
+  const approvalQrRows = buildApprovalQrRows(data?.approvals, data?.approvalQrs);
+  const approvedQrEntries = approvalQrRows.filter(row => row.hasQr).map(row => row.qr);
+  const approvedQrKey = approvedQrEntries.map(qr => qr.approvalId).join('|');
+
+  // Load QR images after doc data arrives. Semua request memakai API client
+  // authenticated; URL berkas internal tidak pernah dikirim ke browser.
   useEffect(() => {
     if (!data) return;
     let isActive = true;
@@ -56,12 +64,13 @@ export default function DocumentDetailPage() {
     let origBlobUrl = null;
 
     setQrEsignUrls({});
+    setQrOriginalUrl(null);
+    setApprovalQrUrls({});
+    setApprovalQrLoading(approvedQrEntries.length > 0);
 
-    // QR per level tidak lagi ditampilkan sebagai gambar — halaman yang
-    // dituju QR dokumen sudah memuat Riwayat Persetujuan dan Identitas
-    // Dokumen yang sama persis, jadi tiga gambar QR hanyalah tiga jalan
-    // menuju isi yang sama. QR-nya tetap dibuat dan tetap bisa diunduh per
-    // level dari daftar riwayat di bawah, hanya tidak dimuat semua di muka.
+    // QR per level tidak dimuat semua di muka agar halaman detail tetap ringan.
+    // Masing-masing tetap bisa diunduh dari riwayat dan, untuk mode per-level,
+    // masing-masing ikut dicetak pada PDF.
     //
     // Dokumen paling lawas (sebelum QR per-approval ada) hanya punya satu
     // qrPathEsign generik dan tidak punya QR dokumen — untuk mereka, itulah
@@ -86,19 +95,39 @@ export default function DocumentDetailPage() {
         .catch(() => {});
     }
 
+    Promise.allSettled(approvedQrEntries.map(async qr => {
+      const res = await api.get(
+        `/documents/${id}/approvals/${qr.approvalId}/qr?preview=true`,
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(res.data);
+      if (!isActive) {
+        URL.revokeObjectURL(url);
+        return null;
+      }
+      blobUrls.push(url);
+      return [qr.approvalId, url];
+    })).then(results => {
+      if (!isActive) return;
+      const urls = Object.fromEntries(
+        results.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value),
+      );
+      setApprovalQrUrls(urls);
+      setApprovalQrLoading(false);
+    });
+
     // MED-09: Revoke blob URLs on cleanup to prevent memory leak
     return () => {
       isActive = false;
       blobUrls.forEach(url => URL.revokeObjectURL(url));
       if (origBlobUrl)   URL.revokeObjectURL(origBlobUrl);
     };
-  }, [data, id]);
+  }, [data?.hasQrOriginal, data?.hasQrEsign, approvedQrKey, id]);
 
   if (isLoading) return <div className="text-center py-16 text-gray-400">Loading document...</div>;
   if (error)     return <div className="text-center py-16 text-red-500">Document unavailable</div>;
 
   const doc = data;
-  const approvalQrs = doc.approvalQrs || [];
   const myPendingApproval = doc.approvals?.find(
     a => a.approverId === user?.id && a.status === 'PENDING'
   );
@@ -243,15 +272,8 @@ export default function DocumentDetailPage() {
           </div>
         </div>
 
-        {/* Kanan — satu QR, satu kartu.
-            Dulu ada dua kartu: "QR Code E-Sign" berisi tiga gambar QR per level,
-            dan "QR Code Original" berisi QR dokumen. Ketiga QR level itu menuju
-            halaman yang isinya sama persis dengan tujuan QR dokumen — Identitas
-            Dokumen dan Riwayat Persetujuan — jadi yang tersisa hanyalah empat
-            jalan menuju satu isi. Yang benar-benar dicetak pun cuma QR dokumen.
-
-            QR per level TETAP dibuat dan tetap bisa diunduh dari daftar riwayat
-            di bawah; yang hilang hanya penampilan gambarnya. */}
+        {/* Kanan — QR dokumen sebagai pintu ke riwayat lengkap. QR approval
+            per level tetap tersedia dari daftar konfirmasi di bawah. */}
         <div className="space-y-4">
           <div className="card p-5">
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
@@ -268,7 +290,9 @@ export default function DocumentDetailPage() {
 
               <p className="text-[11px] text-gray-400 text-center">
                 {qrOriginalUrl
-                  ? 'QR ini yang ditempel pada PDF. Isinya bertambah sendiri setiap kali sebuah level menyetujui.'
+                  ? doc.qrStampMode === 'per_level'
+                    ? `PDF memakai QR setiap level · susunan ${doc.qrLayout || 'horizontal'}. QR ini membuka riwayat lengkap dokumen.`
+                    : 'QR ini ditempel pada PDF dan membuka seluruh rantai approval.'
                   : 'Dokumen lama — QR e-sign tunggal'}
               </p>
 
@@ -300,53 +324,90 @@ export default function DocumentDetailPage() {
               </div>
             </div>
 
-            {/* Riwayat konfirmasi per level — tanpa gambar QR.
-                Inilah yang sebenarnya dicari orang saat dulu memindai QR per
-                level: siapa mengonfirmasi di level berapa, dan kapan. */}
-            <div className="mt-5 pt-4 border-t border-gray-100">
-              <p className="text-xs font-semibold text-gray-700 mb-3">Konfirmasi per Level</p>
+          </div>
 
-              {(!doc.approvals || doc.approvals.length === 0) && (
-                <p className="text-xs text-gray-400">Belum ada level yang dikonfirmasi.</p>
-              )}
+          <div className="card p-5">
+            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+              <QrCode size={16} /> QR Approval per Level
+            </h3>
+            <p className="text-[11px] text-gray-400 mt-1 mb-4">
+              QR diterbitkan setelah approval selesai dan membuka bukti user pada level tersebut.
+              {doc.qrStampMode === 'document' && ' PDF dokumen ini tetap memakai mode satu QR dokumen.'}
+            </p>
 
-              <div className="space-y-2.5">
-                {doc.approvals?.map((a) => {
-                  const qr = approvalQrs.find(q => q.approvalId === a.id);
-                  const tone = a.status === 'APPROVED' ? 'bg-green-500'
-                             : a.status === 'DECLINED' ? 'bg-red-500'
-                             : 'bg-amber-400';
-                  return (
-                    <div key={a.id} className="flex items-start gap-2.5">
-                      <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${tone}`} />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-gray-800">
+            {(!doc.approvals || doc.approvals.length === 0) && (
+              <p className="text-xs text-gray-400">Belum ada level approval.</p>
+            )}
+
+            <div className="space-y-4">
+              {approvalQrRows.map(({ approval: a, hasQr: approved }) => {
+                const qrUrl = approvalQrUrls[a.id];
+                return (
+                  <div key={a.id} className={`rounded-xl border p-3 ${
+                    approved ? 'border-green-200 bg-green-50/50' :
+                    a.status === 'DECLINED' ? 'border-red-200 bg-red-50/40' : 'border-amber-200 bg-amber-50/40'
+                  }`}>
+                    <div className="flex items-start justify-between gap-2 mb-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-gray-800">
                           Level {a.level} — {a.approver?.name || '—'}
                         </p>
-                        <p className="text-[11px] text-gray-500">
-                          {a.status === 'APPROVED' ? 'Disetujui'
-                            : a.status === 'DECLINED' ? 'Ditolak' : 'Menunggu'}
+                        <p className="text-[11px] text-gray-500 capitalize">
+                          {a.approver?.role || 'approver'}
                           {a.signedAt && ` · ${new Date(a.signedAt).toLocaleString('id-ID', {
                             day: '2-digit', month: 'short', year: 'numeric',
                             hour: '2-digit', minute: '2-digit',
                           })}`}
                         </p>
-                        {qr && (
+                      </div>
+                      <StatusBadge status={a.status} />
+                    </div>
+
+                    {approved ? (
+                      <>
+                        <div className="w-36 h-36 mx-auto bg-white rounded-lg border flex items-center justify-center">
+                          {qrUrl ? (
+                            <img src={qrUrl} alt={`QR Approval Level ${a.level}`} className="w-32 h-32" />
+                          ) : approvalQrLoading ? (
+                            <Loader2 size={24} className="animate-spin text-brand-400" />
+                          ) : (
+                            <div className="text-center text-gray-400">
+                              <QrCode size={32} className="mx-auto" />
+                              <p className="text-[10px] mt-1">Gagal memuat QR</p>
+                            </div>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 mt-3">
                           <button
                             onClick={() => downloadFile(
                               `/documents/${id}/approvals/${a.id}/qr`,
                               `qr_level${a.level}_${doc.regulatoryId}.png`,
                             )}
-                            className="text-[11px] text-brand-600 hover:underline mt-0.5"
+                            className="btn-secondary text-xs py-1.5 justify-center"
                           >
-                            Unduh QR level ini
+                            <Download size={12} /> Unduh
                           </button>
-                        )}
+                          <a
+                            href={`/e/approval/${a.id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-secondary text-xs py-1.5 justify-center"
+                          >
+                            <ExternalLink size={12} /> Verifikasi
+                          </a>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="h-24 rounded-lg border border-dashed border-current/20 flex flex-col items-center justify-center text-gray-400">
+                        {a.status === 'DECLINED' ? <XCircle size={24} /> : <Clock size={24} />}
+                        <p className="text-[11px] mt-1">
+                          {a.status === 'DECLINED' ? 'QR tidak diterbitkan' : 'Menunggu approval'}
+                        </p>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

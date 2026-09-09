@@ -9,12 +9,12 @@ async function main() {
 
   // ─── System Settings ─────────────────────────────────────────
   const settings = [
-    { key: 'qr_default_width_pt',  value: '100', description: 'Lebar default QR stamp (PDF points)' },
-    { key: 'qr_default_height_pt', value: '100', description: 'Tinggi default QR stamp (PDF points)' },
+    { key: 'qr_default_width_pt',  value: '48', description: 'Lebar default QR stamp (PDF points)' },
+    { key: 'qr_default_height_pt', value: '48', description: 'Tinggi default QR stamp (PDF points)' },
     { key: 'qr_default_page',      value: '1',   description: 'Halaman default penempatan QR stamp' },
     { key: 'qr_default_x_percent', value: '85',  description: 'Posisi X default (% lebar halaman)' },
     { key: 'qr_default_y_percent', value: '5',   description: 'Posisi Y default (% tinggi halaman dari bawah untuk PDF)' },
-    { key: 'qr_min_width_pt',      value: '60',  description: 'Minimum ukuran QR (points)' },
+    { key: 'qr_min_width_pt',      value: '36',  description: 'Minimum ukuran QR (points)' },
     { key: 'qr_max_width_pt',      value: '200', description: 'Maksimum ukuran QR (points)' },
     { key: 'footer_default_x_percent', value: '3',  description: 'Posisi X default stamp footer (% lebar halaman)' },
     { key: 'footer_default_y_percent', value: '97', description: 'Posisi Y default stamp footer (% tinggi halaman dari atas)' },

@@ -57,11 +57,34 @@ async function fixture() {
 const md5 = (b) => crypto.createHash('md5').update(b).digest('hex');
 
 describe('renderStamped — fungsi murni', () => {
+  test('manifest baru memakai v3 sementara manifest v1 tetap dapat dirender', async () => {
+    const { document, manifest: legacy } = await fixture();
+    const current = await pdfService.resolveStampManifest(document, null, null, 'user-1');
+
+    expect(current.v).toBe(3);
+    expect(current.v).toBe(pdfService.MANIFEST_VERSION);
+    await expect(pdfService.renderStamped(document, legacy)).resolves.toBeInstanceOf(Buffer);
+  });
+
   test('manifest yang sama menghasilkan byte yang sama', async () => {
     const { document, manifest } = await fixture();
     const a = await pdfService.renderStamped(document, manifest);
     const b = await pdfService.renderStamped(document, manifest);
     expect(md5(a)).toBe(md5(b));
+  });
+
+  test('manifest v1 tetap dapat dirender dengan geometri lama', async () => {
+    const { document, manifest } = await fixture();
+    expect(manifest.v).toBe(1);
+    await expect(pdfService.renderStamped(document, manifest)).resolves.toBeInstanceOf(Buffer);
+  });
+
+  test('manifest baru memakai geometri footer baru dan daftar QR v3', async () => {
+    const { document } = await fixture();
+    const manifest = await pdfService.resolveStampManifest(document, null, null, 'user-1');
+    expect(manifest.v).toBe(3);
+    expect(manifest.v).toBe(pdfService.MANIFEST_VERSION);
+    expect(manifest.qrs).toHaveLength(1);
   });
 
   test('tidak menulis apa pun ke disk', async () => {
@@ -85,10 +108,44 @@ describe('renderStamped — fungsi murni', () => {
   });
 
   test('berkas QR hilang: melempar dengan pesan yang menyebut berkasnya', async () => {
-    const { document, manifest } = await fixture();
-    fs.unlinkSync(manifest.qrFile);
+    const { document } = await fixture();
+    const manifest = await pdfService.resolveStampManifest(document, null, null, 'user-1');
+    fs.unlinkSync(manifest.qrs[0].qrFile);
     await expect(pdfService.renderStamped(document, manifest))
       .rejects.toThrow(/QR image missing/);
+  });
+
+  test('v2 satu-QR tetap dapat dirender', async () => {
+    const { document, manifest } = await fixture();
+    await expect(pdfService.renderStamped(document, { ...manifest, v: 2 }))
+      .resolves.toBeInstanceOf(Buffer);
+  });
+
+  test('QR approval level berikutnya ditambahkan ke manifest tanpa menulis PDF', async () => {
+    const { document } = await fixture();
+    document.qrStampMode = 'per_level';
+    document.qrLayout = 'horizontal';
+    const firstQr = document.qrPathOriginal;
+    const manifest = await pdfService.resolveStampManifest(
+      document, null, null, 'user-0',
+      { approval: { id: 'approval-0', approverId: 'user-0', level: 0 }, qrFile: firstQr },
+    );
+    const next = await pdfService.appendApprovalQr(
+      document,
+      manifest,
+      { id: 'approval-1', approverId: 'user-1', level: 1 },
+      firstQr,
+    );
+    expect(next.qrs.map(qr => qr.level)).toEqual([0, 1]);
+    expect(next.qrs[1].approvalId).toBe('approval-1');
+    const final = await pdfService.appendApprovalQr(
+      document,
+      next,
+      { id: 'approval-2', approverId: 'user-2', level: 2 },
+      firstQr,
+    );
+    expect(new Set(final.qrs.map(qr => `${qr.xPct}:${qr.yPct}`)).size).toBe(3);
+    await expect(pdfService.renderStamped(document, final)).resolves.toBeInstanceOf(Buffer);
   });
 
   test('menambahkan gambar ke halaman, bukan mengganti halaman', async () => {
@@ -105,6 +162,13 @@ describe('manifestHash — kunci cache', () => {
     const { manifest } = await fixture();
     const moved = { ...manifest, qr: { ...manifest.qr, xPct: 10 } };
     expect(pdfService.manifestHash(moved)).not.toBe(pdfService.manifestHash(manifest));
+  });
+
+  test('menambah QR v3 mengubah hash cache', async () => {
+    const { document } = await fixture();
+    const manifest = await pdfService.resolveStampManifest(document, null, null, 'user-1');
+    const added = { ...manifest, qrs: [...manifest.qrs, { ...manifest.qrs[0], approvalId: 'level-1' }] };
+    expect(pdfService.manifestHash(added)).not.toBe(pdfService.manifestHash(manifest));
   });
 
   test('mengubah teks footer mengubah hash', async () => {
